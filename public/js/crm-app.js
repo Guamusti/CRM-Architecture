@@ -1,5 +1,5 @@
 'use strict';
-/* Zyra CRM — frontend sin build (React UMD + htm, compatible con CSP).
+/* CRM white-label — frontend sin build (React UMD + htm, compatible con CSP).
    REGLA: aquí no hay lógica de seguridad. Los permisos solo ocultan
    controles como mejora de UX; el backend decide siempre. */
 
@@ -7,15 +7,15 @@ const { useState, useEffect, useCallback } = React;
 const html = htm.bind(React.createElement);
 
 // ----------------------------------------------------------------
-// API
+// API y sesión
 // ----------------------------------------------------------------
 function getSession() {
-  try { return JSON.parse(sessionStorage.getItem('zyra_crm_session')) || null; }
+  try { return JSON.parse(sessionStorage.getItem('crm_session')) || null; }
   catch { return null; }
 }
 function setSession(s) {
-  if (s) sessionStorage.setItem('zyra_crm_session', JSON.stringify(s));
-  else sessionStorage.removeItem('zyra_crm_session');
+  if (s) sessionStorage.setItem('crm_session', JSON.stringify(s));
+  else sessionStorage.removeItem('crm_session');
 }
 
 async function api(path, { method = 'GET', body, query } = {}) {
@@ -46,14 +46,16 @@ async function api(path, { method = 'GET', body, query } = {}) {
 const LEAD_STATUS = { new: 'Nuevo', contacted: 'Contactado', qualified: 'Cualificado', unqualified: 'No cualificado', converted: 'Convertido', lost: 'Perdido' };
 const PRIORITY = { low: 'Baja', medium: 'Media', high: 'Alta', urgent: 'Urgente' };
 const SOURCE = { web: 'Web', referral: 'Referido', cold_call: 'Puerta fría', email: 'Email', social: 'RRSS', event: 'Evento', partner: 'Partner', inbound: 'Inbound', other: 'Otro' };
-const PRODUCT = { tpv: 'TPV', erp: 'ERP', inventario: 'Inventario', fichajes: 'Fichajes', tareas: 'Tareas', crm: 'CRM', suite: 'Suite completa' };
 const COMPANY_STATUS = { prospect: 'Prospecto', active: 'Activa', customer: 'Cliente', inactive: 'Inactiva', former_customer: 'Ex-cliente' };
 const TASK_STATUS = { pending: 'Pendiente', in_progress: 'En curso', done: 'Hecha', cancelled: 'Cancelada' };
+const ROLES = { owner: 'Owner', admin: 'Admin', manager: 'Manager', worker: 'Comercial', caja: 'Caja' };
+const ENTITY_LABEL = { lead: 'Lead', company: 'Empresa', contact: 'Contacto', opportunity: 'Oportunidad' };
+const FIELD_TYPES = { text: 'Texto', number: 'Número', date: 'Fecha', boolean: 'Sí/No', select: 'Lista' };
 
 const ROLE_PERMS = {
-  owner: ['read', 'create', 'update', 'delete', 'assign', 'close', 'pipeline', 'export', 'gdpr'],
-  admin: ['read', 'create', 'update', 'delete', 'assign', 'close', 'pipeline', 'export', 'gdpr'],
-  manager: ['read', 'create', 'update', 'assign', 'close', 'export'],
+  owner: ['read', 'create', 'update', 'delete', 'assign', 'close', 'pipeline', 'export', 'gdpr', 'admin', 'import'],
+  admin: ['read', 'create', 'update', 'delete', 'assign', 'close', 'pipeline', 'export', 'gdpr', 'admin', 'import'],
+  manager: ['read', 'create', 'update', 'assign', 'close', 'export', 'import'],
   worker: ['read', 'create', 'update'],
   caja: [],
 };
@@ -79,7 +81,7 @@ function Badge({ value, map, colorMap }) {
 function Toast({ toast }) {
   if (!toast) return null;
   const color = toast.type === 'error' ? 'bg-red-600' : 'bg-emerald-600';
-  return html`<div class="fixed bottom-4 right-4 z-50 ${color} text-white px-4 py-2 rounded-lg shadow-lg text-sm">${toast.msg}</div>`;
+  return html`<div class="fixed bottom-4 right-4 z-50 ${color} text-white px-4 py-2 rounded-lg shadow-lg text-sm max-w-md">${toast.msg}</div>`;
 }
 
 function Spinner() {
@@ -87,11 +89,11 @@ function Spinner() {
 }
 
 // ----------------------------------------------------------------
-// Login
+// Login + Signup (alta self-service de organización)
 // ----------------------------------------------------------------
 function Login({ onLogin }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [mode, setMode] = useState('login');
+  const [form, setForm] = useState({ organization_name: '', name: '', email: '', password: '' });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -99,7 +101,9 @@ function Login({ onLogin }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const res = await api('/auth/login', { method: 'POST', body: { email, password } });
+      const res = mode === 'login'
+        ? await api('/auth/login', { method: 'POST', body: { email: form.email, password: form.password } })
+        : await api('/auth/signup', { method: 'POST', body: form });
       setSession(res.data);
       onLogin();
     } catch (err) {
@@ -107,29 +111,43 @@ function Login({ onLogin }) {
     } finally { setBusy(false); }
   }
 
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
   return html`
     <div class="min-h-screen flex items-center justify-center">
-      <form onSubmit=${submit} class="bg-white rounded-2xl shadow-xl p-8 w-96 space-y-4">
+      <form onSubmit=${submit} class="bg-white rounded-2xl shadow-xl p-8 w-[26rem] space-y-4">
         <div class="text-center">
-          <div class="text-2xl font-bold text-indigo-600">Zyra CRM</div>
-          <div class="text-sm text-slate-500">Accede con tu cuenta</div>
+          <div class="text-2xl font-bold text-indigo-600">CRM</div>
+          <div class="text-sm text-slate-500">
+            ${mode === 'login' ? 'Accede con tu cuenta' : 'Crea la cuenta de tu empresa'}
+          </div>
         </div>
         ${error && html`<div class="bg-red-50 text-red-700 text-sm rounded-lg p-2">${error}</div>`}
+        ${mode === 'signup' && html`
+          <input class="w-full border rounded-lg px-3 py-2" placeholder="Nombre de tu empresa" required minLength="2" maxLength="200"
+            value=${form.organization_name} onInput=${set('organization_name')} />
+          <input class="w-full border rounded-lg px-3 py-2" placeholder="Tu nombre" required minLength="2" maxLength="120"
+            value=${form.name} onInput=${set('name')} />`}
         <input class="w-full border rounded-lg px-3 py-2" type="email" placeholder="Email" required
-          value=${email} onInput=${(e) => setEmail(e.target.value)} />
-        <input class="w-full border rounded-lg px-3 py-2" type="password" placeholder="Contraseña" required minLength="8"
-          value=${password} onInput=${(e) => setPassword(e.target.value)} />
+          value=${form.email} onInput=${set('email')} />
+        <input class="w-full border rounded-lg px-3 py-2" type="password" placeholder="Contraseña"
+          required minLength=${mode === 'signup' ? 10 : 8}
+          value=${form.password} onInput=${set('password')} />
         <button disabled=${busy} class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 font-medium disabled:opacity-50">
-          ${busy ? 'Entrando…' : 'Entrar'}
+          ${busy ? 'Un momento…' : mode === 'login' ? 'Entrar' : 'Crear cuenta'}
+        </button>
+        <button type="button" class="w-full text-sm text-indigo-600 hover:underline"
+          onClick=${() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null); }}>
+          ${mode === 'login' ? '¿Primera vez? Crea la cuenta de tu empresa' : 'Ya tengo cuenta: entrar'}
         </button>
       </form>
     </div>`;
 }
 
 // ----------------------------------------------------------------
-// Formulario genérico (modal)
+// Formulario genérico (modal) con soporte de campos personalizados
 // ----------------------------------------------------------------
-function FormModal({ title, fields, initial, onSave, onClose }) {
+function FormModal({ title, fields, customDefs = [], initial, onSave, onClose }) {
   const [values, setValues] = useState(() => {
     const v = {};
     for (const f of fields) {
@@ -139,6 +157,11 @@ function FormModal({ title, fields, initial, onSave, onClose }) {
       v[f.name] = val ?? '';
     }
     return v;
+  });
+  const [custom, setCustom] = useState(() => {
+    const c = {};
+    for (const d of customDefs) c[d.key] = initial?.custom?.[d.key] ?? (d.field_type === 'boolean' ? false : '');
+    return c;
   });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -152,6 +175,16 @@ function FormModal({ title, fields, initial, onSave, onClose }) {
       if (f.type === 'datetime') v = new Date(v).toISOString();
       out[f.name] = v;
     }
+    if (customDefs.length) {
+      out.custom = {};
+      for (const d of customDefs) {
+        let v = custom[d.key];
+        if (d.field_type === 'boolean') { out.custom[d.key] = !!v; continue; }
+        if (v === '' || v == null) { if (initial) out.custom[d.key] = null; continue; }
+        if (d.field_type === 'number') v = Number(v);
+        out.custom[d.key] = v;
+      }
+    }
     return out;
   }
 
@@ -161,6 +194,26 @@ function FormModal({ title, fields, initial, onSave, onClose }) {
     try { await onSave(serialize()); onClose(); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
+  }
+
+  function customInput(d) {
+    const v = custom[d.key];
+    const set = (val) => setCustom({ ...custom, [d.key]: val });
+    if (d.field_type === 'boolean') return html`
+      <label class="flex items-center gap-2 mt-1">
+        <input type="checkbox" checked=${!!v} onChange=${(e) => set(e.target.checked)} />
+        <span class="text-sm">${d.label}</span>
+      </label>`;
+    if (d.field_type === 'select') return html`
+      <select class="w-full border rounded-lg px-3 py-2 mt-1" value=${v} onChange=${(e) => set(e.target.value)}>
+        <option value="">—</option>
+        ${(d.options || []).map((o) => html`<option key=${o} value=${o}>${o}</option>`)}
+      </select>`;
+    return html`
+      <input class="w-full border rounded-lg px-3 py-2 mt-1"
+        type=${d.field_type === 'number' ? 'number' : d.field_type === 'date' ? 'date' : 'text'}
+        step=${d.field_type === 'number' ? 'any' : undefined} maxLength="500"
+        value=${v} onInput=${(e) => set(e.target.value)} />`;
   }
 
   return html`
@@ -176,14 +229,26 @@ function FormModal({ title, fields, initial, onSave, onClose }) {
                 value=${values[f.name]} onChange=${(e) => setValues({ ...values, [f.name]: e.target.value })}>
                 <option value="">—</option>
                 ${Object.entries(f.options).map(([k, v]) => html`<option key=${k} value=${k}>${v}</option>`)}
-              </select>` : f.type === 'textarea' ? html`
+              </select>` : f.type === 'checkbox' ? html`
+              <input type="checkbox" class="block mt-1" checked=${values[f.name] === true || values[f.name] === 'true'}
+                onChange=${(e) => setValues({ ...values, [f.name]: e.target.checked })} />` : f.type === 'textarea' ? html`
               <textarea class="w-full border rounded-lg px-3 py-2 mt-1" rows="3" maxLength=${f.max || 500}
                 value=${values[f.name]} onInput=${(e) => setValues({ ...values, [f.name]: e.target.value })}></textarea>` : html`
               <input class="w-full border rounded-lg px-3 py-2 mt-1" required=${!!f.required}
                 type=${f.type === 'datetime' ? 'datetime-local' : f.type || 'text'}
                 maxLength=${f.max || 200} step=${f.type === 'number' ? '0.01' : undefined}
+                minLength=${f.minLength || undefined}
                 value=${values[f.name]} onInput=${(e) => setValues({ ...values, [f.name]: e.target.value })} />`}
           </label>`)}
+        ${customDefs.length > 0 && html`
+          <div class="border-t pt-2">
+            <div class="text-xs font-semibold text-slate-400 uppercase mb-1">Campos personalizados</div>
+            ${customDefs.map((d) => html`
+              <label key=${d.key} class="block mb-2">
+                ${d.field_type !== 'boolean' && html`<span class="text-xs font-medium text-slate-600">${d.label}</span>`}
+                ${customInput(d)}
+              </label>`)}
+          </div>`}
         <div class="flex gap-2 justify-end pt-2">
           <button type="button" class="px-4 py-2 rounded-lg border" onClick=${onClose}>Cancelar</button>
           <button disabled=${busy} class="px-4 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50">
@@ -191,6 +256,68 @@ function FormModal({ title, fields, initial, onSave, onClose }) {
           </button>
         </div>
       </form>
+    </div>`;
+}
+
+// ----------------------------------------------------------------
+// Importación CSV (parseo en cliente -> filas JSON al backend)
+// ----------------------------------------------------------------
+function parseCsv(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) throw new Error('El CSV necesita cabecera y al menos una fila');
+  const split = (line) => line.split(';').length > line.split(',').length ? line.split(';') : line.split(',');
+  const headers = split(lines[0]).map((h) => h.trim().toLowerCase().replace(/\s+/g, '_'));
+  return lines.slice(1).map((line) => {
+    const cells = split(line);
+    const row = {};
+    headers.forEach((h, i) => {
+      const v = (cells[i] || '').trim();
+      if (v !== '') row[h] = v;
+    });
+    return row;
+  });
+}
+
+function ImportModal({ resource, columnsHint, onDone, onClose, notify }) {
+  const [text, setText] = useState('');
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    try {
+      const rows = parseCsv(text);
+      if (rows.length > 500) throw new Error('Máximo 500 filas por importación');
+      const res = await api(`/crm/import/${resource}`, { method: 'POST', body: { rows } });
+      setResult(res.data);
+      if (res.data.created) { notify(`${res.data.created} registros importados`); onDone(); }
+    } catch (err) { notify(err.message, 'error'); }
+    finally { setBusy(false); }
+  }
+
+  return html`
+    <div class="fixed inset-0 bg-black/40 z-40 flex items-center justify-center p-4" onClick=${(e) => e.target === e.currentTarget && onClose()}>
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-3">
+        <div class="text-lg font-semibold">Importar CSV</div>
+        <div class="text-xs text-slate-500">
+          Primera línea: cabeceras (separador coma o punto y coma). Columnas admitidas:
+          <code class="bg-slate-100 px-1 rounded">${columnsHint}</code>
+        </div>
+        <textarea class="w-full border rounded-lg p-2 font-mono text-xs" rows="10"
+          placeholder=${`${columnsHint.split(', ').slice(0, 3).join(',')}\n...`}
+          value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
+        ${result && html`
+          <div class="text-sm bg-slate-50 rounded-lg p-2">
+            <div>Importados: <b class="text-emerald-700">${result.created}</b> · Fallidos: <b class="text-red-600">${result.failed}</b></div>
+            ${result.errors.map((e) => html`<div key=${e.row} class="text-xs text-red-600">Fila ${e.row}: ${e.error}</div>`)}
+          </div>`}
+        <div class="flex gap-2 justify-end">
+          <button class="px-4 py-2 rounded-lg border" onClick=${onClose}>Cerrar</button>
+          <button disabled=${busy || !text.trim()} class="px-4 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50" onClick=${run}>
+            ${busy ? 'Importando…' : 'Importar'}
+          </button>
+        </div>
+      </div>
     </div>`;
 }
 
@@ -258,9 +385,9 @@ function Drawer({ title, onClose, children, actions }) {
   return html`
     <div class="fixed inset-0 z-30 bg-black/30" onClick=${(e) => e.target === e.currentTarget && onClose()}>
       <div class="absolute right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl overflow-y-auto">
-        <div class="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between">
+        <div class="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between gap-2">
           <div class="font-semibold truncate">${title}</div>
-          <div class="flex gap-2 items-center">
+          <div class="flex gap-2 items-center shrink-0">
             ${actions}
             <button class="text-slate-400 hover:text-slate-700 text-xl leading-none" onClick=${onClose}>×</button>
           </div>
@@ -270,7 +397,7 @@ function Drawer({ title, onClose, children, actions }) {
     </div>`;
 }
 
-function FieldGrid({ row, fields }) {
+function FieldGrid({ row, fields, customDefs = [] }) {
   return html`
     <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-5">
       ${fields.map((f) => html`
@@ -278,18 +405,25 @@ function FieldGrid({ row, fields }) {
           <div class="text-xs text-slate-400">${f.label}</div>
           <div class="text-sm">${f.render ? f.render(row[f.name], row) : (row[f.name] ?? '—')}</div>
         </div>`)}
+      ${customDefs.map((d) => html`
+        <div key=${d.key}>
+          <div class="text-xs text-slate-400">${d.label}</div>
+          <div class="text-sm">${row.custom?.[d.key] === true ? 'Sí' : row.custom?.[d.key] === false ? 'No' : (row.custom?.[d.key] ?? '—')}</div>
+        </div>`)}
     </div>`;
 }
 
 // ----------------------------------------------------------------
-// Vista de tabla genérica con filtros y paginación
+// Vista de tabla genérica con filtros, paginación e importación
 // ----------------------------------------------------------------
-function TableView({ resource, columns, filters, formFields, detailFields, title, singular, notify, extraDrawerActions, onCreatedExtra }) {
+function TableView({ resource, columns, filters, formFields, detailFields, title, singular, notify,
+                     extraDrawerActions, customDefs = [], importColumnsHint, transformPayload, editable = true }) {
   const [data, setData] = useState(null);
   const [pagination, setPagination] = useState({ page: 1 });
   const [query, setQuery] = useState({});
   const [selected, setSelected] = useState(null);
-  const [editing, setEditing] = useState(null); // null | {} (nuevo) | row
+  const [editing, setEditing] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   const load = useCallback(async (page = 1) => {
     try {
@@ -301,6 +435,7 @@ function TableView({ resource, columns, filters, formFields, detailFields, title
   useEffect(() => { load(1); }, [load]);
 
   async function save(payload) {
+    if (transformPayload) payload = transformPayload(payload);
     if (editing?.id) {
       const res = await api(`/crm/${resource}/${editing.id}`, { method: 'PATCH', body: payload });
       notify(`${singular} actualizado`);
@@ -308,7 +443,6 @@ function TableView({ resource, columns, filters, formFields, detailFields, title
     } else {
       await api(`/crm/${resource}`, { method: 'POST', body: payload });
       notify(`${singular} creado`);
-      if (onCreatedExtra) onCreatedExtra();
     }
     await load(pagination.page);
   }
@@ -327,7 +461,7 @@ function TableView({ resource, columns, filters, formFields, detailFields, title
     <div>
       <div class="flex flex-wrap items-center gap-2 mb-4">
         <h2 class="text-lg font-semibold mr-auto">${title}</h2>
-        <input class="border rounded-lg px-3 py-1.5 text-sm w-48" placeholder="Buscar…" maxLength="100"
+        <input class="border rounded-lg px-3 py-1.5 text-sm w-44" placeholder="Buscar…" maxLength="100"
           onInput=${(e) => setQuery({ ...query, search: e.target.value })} value=${query.search || ''} />
         ${(filters || []).map((f) => html`
           <select key=${f.name} class="border rounded-lg px-2 py-1.5 text-sm" value=${query[f.name] || ''}
@@ -335,6 +469,8 @@ function TableView({ resource, columns, filters, formFields, detailFields, title
             <option value="">${f.label}: todos</option>
             ${Object.entries(f.options).map(([k, v]) => html`<option key=${k} value=${k}>${v}</option>`)}
           </select>`)}
+        ${importColumnsHint && can('import') && html`
+          <button class="border rounded-lg px-3 py-1.5 text-sm" onClick=${() => setImporting(true)}>Importar CSV</button>`}
         ${can('create') && html`
           <button class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm" onClick=${() => setEditing({})}>+ Nuevo</button>`}
       </div>
@@ -367,24 +503,29 @@ function TableView({ resource, columns, filters, formFields, detailFields, title
 
       ${editing !== null && html`
         <${FormModal} title=${editing.id ? `Editar ${singular.toLowerCase()}` : `Nuevo ${singular.toLowerCase()}`}
-          fields=${formFields} initial=${editing.id ? editing : null}
+          fields=${formFields} customDefs=${customDefs} initial=${editing.id ? editing : null}
           onSave=${save} onClose=${() => setEditing(null)} />`}
+
+      ${importing && html`
+        <${ImportModal} resource=${resource} columnsHint=${importColumnsHint} notify=${notify}
+          onDone=${() => load(1)} onClose=${() => setImporting(false)} />`}
 
       ${selected && html`
         <${Drawer} title=${selected.name || selected.title || `${selected.first_name || ''} ${selected.last_name || ''}`}
           onClose=${() => setSelected(null)}
           actions=${html`
             ${extraDrawerActions && extraDrawerActions(selected, { reload: () => load(pagination.page), close: () => setSelected(null), notify })}
-            ${can('update') && html`<button class="text-sm px-2 py-1 border rounded-lg" onClick=${() => setEditing(selected)}>Editar</button>`}
+            ${can('update') && editable && html`<button class="text-sm px-2 py-1 border rounded-lg" onClick=${() => setEditing(selected)}>Editar</button>`}
             ${can('delete') && html`<button class="text-sm px-2 py-1 border border-red-200 text-red-600 rounded-lg" onClick=${() => remove(selected)}>Eliminar</button>`}`}>
-          <${FieldGrid} row=${selected} fields=${detailFields || columns} />
-          <${NotesAndActivity} entityType=${singularEntityType(resource)} entityId=${selected.id} notify=${notify} />
+          <${FieldGrid} row=${selected} fields=${detailFields || columns} customDefs=${customDefs} />
+          ${singularEntityType(resource) && html`
+            <${NotesAndActivity} entityType=${singularEntityType(resource)} entityId=${selected.id} notify=${notify} />`}
         <//>`}
     </div>`;
 }
 
 function singularEntityType(resource) {
-  return { leads: 'lead', companies: 'company', contacts: 'contact', opportunities: 'opportunity', tasks: 'task' }[resource];
+  return { leads: 'lead', companies: 'company', contacts: 'contact', opportunities: 'opportunity', tasks: 'task' }[resource] || null;
 }
 
 // ----------------------------------------------------------------
@@ -441,7 +582,7 @@ function Dashboard({ notify }) {
 // ----------------------------------------------------------------
 // Kanban del pipeline
 // ----------------------------------------------------------------
-function Pipeline({ notify, users }) {
+function Pipeline({ notify, users, products, customDefs }) {
   const [pipeline, setPipeline] = useState(null);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -480,7 +621,7 @@ function Pipeline({ notify, users }) {
     { name: 'amount', label: 'Importe (€)', type: 'number' },
     { name: 'probability', label: 'Probabilidad (%)', type: 'number' },
     { name: 'priority', label: 'Prioridad', type: 'select', options: PRIORITY },
-    { name: 'zyra_product', label: 'Producto Zyra', type: 'select', options: PRODUCT },
+    { name: 'product_id', label: 'Producto/Servicio', type: 'select', options: Object.fromEntries(products.map((p) => [p.id, p.name])) },
     { name: 'owner_user_id', label: 'Responsable', type: 'select', options: Object.fromEntries(users.map((u) => [u.id, u.name])) },
     { name: 'expected_close_date', label: 'Cierre previsto', type: 'date' },
     { name: 'next_step', label: 'Próximo paso', type: 'textarea', max: 500 },
@@ -498,7 +639,7 @@ function Pipeline({ notify, users }) {
       <div class="flex gap-3 overflow-x-auto pb-4">
         ${pipeline.stages.map((stage) => html`
           <div key=${stage.id} class="w-64 shrink-0 bg-slate-50 rounded-xl border">
-            <div class="px-3 py-2 border-b flex items-center justify-between" style=${{ borderTopColor: stage.color }}>
+            <div class="px-3 py-2 border-b flex items-center justify-between">
               <span class="text-sm font-semibold" style=${{ color: stage.color || undefined }}>${stage.name}</span>
               <span class="text-xs text-slate-400">${stage.opportunities.length}</span>
             </div>
@@ -528,7 +669,7 @@ function Pipeline({ notify, users }) {
       </div>
 
       ${creating && html`
-        <${FormModal} title="Nueva oportunidad" fields=${oppFormFields}
+        <${FormModal} title="Nueva oportunidad" fields=${oppFormFields} customDefs=${customDefs.opportunity || []}
           onSave=${async (payload) => { await api('/crm/opportunities', { method: 'POST', body: payload }); notify('Oportunidad creada'); load(); }}
           onClose=${() => setCreating(false)} />`}
 
@@ -549,18 +690,150 @@ function Pipeline({ notify, users }) {
 }
 
 // ----------------------------------------------------------------
+// Panel de administración (usuarios, productos, campos, marca)
+// ----------------------------------------------------------------
+function AdminUsers({ notify }) {
+  const [users, setUsers] = useState(null);
+  const [editing, setEditing] = useState(null);
+
+  const load = useCallback(() => {
+    api('/crm/admin/users').then((r) => setUsers(r.data)).catch((e) => notify(e.message, 'error'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const createFields = [
+    { name: 'name', label: 'Nombre', required: true, max: 120 },
+    { name: 'email', label: 'Email', type: 'email', required: true, max: 254 },
+    { name: 'password', label: 'Contraseña temporal (mín. 10)', type: 'password', required: true, minLength: 10, max: 128 },
+    { name: 'role', label: 'Rol', type: 'select', required: true, options: ROLES },
+  ];
+  const editFields = [
+    { name: 'name', label: 'Nombre', max: 120 },
+    { name: 'role', label: 'Rol', type: 'select', options: ROLES },
+    { name: 'is_active', label: 'Activo', type: 'checkbox' },
+  ];
+
+  async function save(payload) {
+    if (editing?.id) {
+      await api(`/crm/admin/users/${editing.id}`, { method: 'PATCH', body: payload });
+      notify('Usuario actualizado');
+    } else {
+      await api('/crm/admin/users', { method: 'POST', body: payload });
+      notify('Usuario creado');
+    }
+    load();
+  }
+
+  if (!users) return html`<${Spinner} />`;
+  return html`
+    <div>
+      <div class="flex justify-between items-center mb-3">
+        <div class="text-sm font-semibold">Usuarios (${users.length})</div>
+        <button class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm" onClick=${() => setEditing({})}>+ Invitar usuario</button>
+      </div>
+      <div class="bg-white rounded-xl shadow overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="text-left text-xs text-slate-400 border-b">
+            <th class="px-4 py-2">Nombre</th><th class="px-4 py-2">Email</th>
+            <th class="px-4 py-2">Rol</th><th class="px-4 py-2">Estado</th><th class="px-4 py-2"></th>
+          </tr></thead>
+          <tbody>
+            ${users.map((u) => html`
+              <tr key=${u.id} class="border-b last:border-0">
+                <td class="px-4 py-2">${u.name}</td>
+                <td class="px-4 py-2">${u.email}</td>
+                <td class="px-4 py-2"><${Badge} value=${u.role} map=${ROLES} /></td>
+                <td class="px-4 py-2">${u.is_active ? 'Activo' : html`<span class="text-red-600">Desactivado</span>`}</td>
+                <td class="px-4 py-2 text-right">
+                  ${u.id !== getSession()?.user?.id && html`
+                    <button class="text-xs border rounded px-2 py-1" onClick=${() => setEditing(u)}>Editar</button>`}
+                </td>
+              </tr>`)}
+          </tbody>
+        </table>
+      </div>
+      ${editing !== null && html`
+        <${FormModal} title=${editing.id ? 'Editar usuario' : 'Invitar usuario'}
+          fields=${editing.id ? editFields : createFields} initial=${editing.id ? editing : null}
+          onSave=${save} onClose=${() => setEditing(null)} />`}
+    </div>`;
+}
+
+function AdminBranding({ notify, onBrandChange }) {
+  const [settings, setSettings] = useState(null);
+  useEffect(() => {
+    api('/crm/settings').then((r) => setSettings(r.data)).catch((e) => notify(e.message, 'error'));
+  }, []);
+  if (!settings) return html`<${Spinner} />`;
+
+  async function save(e) {
+    e.preventDefault();
+    try {
+      const res = await api('/crm/settings', {
+        method: 'PATCH',
+        body: {
+          brand_name: settings.brand_name || null,
+          brand_color: settings.brand_color || null,
+        },
+      });
+      notify('Marca actualizada');
+      onBrandChange(res.data);
+    } catch (err) { notify(err.message, 'error'); }
+  }
+
+  return html`
+    <form onSubmit=${save} class="bg-white rounded-xl shadow p-4 max-w-md space-y-3">
+      <div class="text-sm font-semibold">Marca de tu CRM</div>
+      <label class="block">
+        <span class="text-xs text-slate-600">Nombre visible (cabecera)</span>
+        <input class="w-full border rounded-lg px-3 py-2 mt-1" maxLength="60"
+          value=${settings.brand_name || ''} onInput=${(e) => setSettings({ ...settings, brand_name: e.target.value })} />
+      </label>
+      <label class="block">
+        <span class="text-xs text-slate-600">Color de marca</span>
+        <input type="color" class="block mt-1 h-9 w-16 border rounded"
+          value=${settings.brand_color || '#4f46e5'} onInput=${(e) => setSettings({ ...settings, brand_color: e.target.value })} />
+      </label>
+      <button class="bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm">Guardar</button>
+    </form>`;
+}
+
+function Admin({ notify, productsView, customFieldsView, onBrandChange }) {
+  const [section, setSection] = useState('users');
+  const sections = [
+    ['users', 'Usuarios'], ['products', 'Productos'], ['fields', 'Campos personalizados'], ['brand', 'Marca'],
+  ];
+  return html`
+    <div>
+      <h2 class="text-lg font-semibold mb-4">Administración</h2>
+      <div class="flex gap-1 mb-4">
+        ${sections.map(([id, label]) => html`
+          <button key=${id} onClick=${() => setSection(id)}
+            class="px-3 py-1.5 rounded-lg text-sm ${section === id ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-200'}">
+            ${label}
+          </button>`)}
+      </div>
+      ${section === 'users' && html`<${AdminUsers} notify=${notify} />`}
+      ${section === 'products' && html`<${TableView} key="products" ...${productsView} notify=${notify} />`}
+      ${section === 'fields' && html`<${TableView} key="fields" ...${customFieldsView} notify=${notify} />`}
+      ${section === 'brand' && html`<${AdminBranding} notify=${notify} onBrandChange=${onBrandChange} />`}
+    </div>`;
+}
+
+// ----------------------------------------------------------------
 // Definiciones de vistas de tabla
 // ----------------------------------------------------------------
-function leadViews(users, notify) {
-  const ownerOptions = Object.fromEntries(users.map((u) => [u.id, u.name]));
+function leadViews(users, products, notify) {
+  const productMap = Object.fromEntries(products.map((p) => [p.id, p.name]));
   return {
     title: 'Leads', singular: 'Lead', resource: 'leads',
+    importColumnsHint: 'title, status, source, priority, main_pain, estimated_value, next_step',
     columns: [
       { name: 'title', label: 'Lead' },
       { name: 'status', label: 'Estado', render: (v) => html`<${Badge} value=${v} map=${LEAD_STATUS} />` },
       { name: 'priority', label: 'Prioridad', render: (v) => html`<${Badge} value=${v} map=${PRIORITY} colorMap=${PRIORITY_COLOR} />` },
       { name: 'source', label: 'Fuente', render: (v) => SOURCE[v] || v },
-      { name: 'zyra_product', label: 'Producto', render: (v) => PRODUCT[v] || '—' },
+      { name: 'product_id', label: 'Producto', render: (v) => productMap[v] || '—' },
       { name: 'estimated_value', label: 'Valor est.', render: fmtMoney },
       { name: 'next_follow_up_at', label: 'Seguimiento', render: fmtDateTime },
     ],
@@ -568,15 +841,15 @@ function leadViews(users, notify) {
       { name: 'status', label: 'Estado', options: LEAD_STATUS },
       { name: 'priority', label: 'Prioridad', options: PRIORITY },
       { name: 'source', label: 'Fuente', options: SOURCE },
-      { name: 'zyra_product', label: 'Producto', options: PRODUCT },
+      { name: 'product_id', label: 'Producto', options: productMap },
     ],
     formFields: [
       { name: 'title', label: 'Título', required: true, max: 200 },
       { name: 'status', label: 'Estado', type: 'select', options: LEAD_STATUS },
       { name: 'priority', label: 'Prioridad', type: 'select', options: PRIORITY },
       { name: 'source', label: 'Fuente', type: 'select', options: SOURCE },
-      { name: 'zyra_product', label: 'Producto Zyra', type: 'select', options: PRODUCT },
-      { name: 'owner_user_id', label: 'Responsable', type: 'select', options: ownerOptions },
+      { name: 'product_id', label: 'Producto/Servicio', type: 'select', options: productMap },
+      { name: 'owner_user_id', label: 'Responsable', type: 'select', options: Object.fromEntries(users.map((u) => [u.id, u.name])) },
       { name: 'estimated_value', label: 'Valor estimado (€)', type: 'number' },
       { name: 'main_pain', label: 'Dolor principal', type: 'textarea', max: 500 },
       { name: 'next_step', label: 'Próximo paso', type: 'textarea', max: 500 },
@@ -587,7 +860,7 @@ function leadViews(users, notify) {
       { name: 'status', label: 'Estado', render: (v) => html`<${Badge} value=${v} map=${LEAD_STATUS} />` },
       { name: 'priority', label: 'Prioridad', render: (v) => html`<${Badge} value=${v} map=${PRIORITY} colorMap=${PRIORITY_COLOR} />` },
       { name: 'source', label: 'Fuente', render: (v) => SOURCE[v] || v },
-      { name: 'zyra_product', label: 'Producto', render: (v) => PRODUCT[v] || '—' },
+      { name: 'product_id', label: 'Producto', render: (v) => productMap[v] || '—' },
       { name: 'estimated_value', label: 'Valor estimado', render: fmtMoney },
       { name: 'main_pain', label: 'Dolor principal' },
       { name: 'next_step', label: 'Próximo paso' },
@@ -612,6 +885,7 @@ function leadViews(users, notify) {
 function companyViews(users) {
   return {
     title: 'Empresas', singular: 'Empresa', resource: 'companies',
+    importColumnsHint: 'name, legal_name, tax_id, industry, email, phone, city, province, postal_code',
     columns: [
       { name: 'name', label: 'Empresa' },
       { name: 'status', label: 'Estado', render: (v) => html`<${Badge} value=${v} map=${COMPANY_STATUS} />` },
@@ -654,6 +928,7 @@ function companyViews(users) {
 function contactViews(users, notify) {
   return {
     title: 'Contactos', singular: 'Contacto', resource: 'contacts',
+    importColumnsHint: 'first_name, last_name, email, phone, job_title',
     columns: [
       { name: 'first_name', label: 'Nombre', render: (v, r) => `${v} ${r.last_name || ''}` },
       { name: 'email', label: 'Email' },
@@ -708,7 +983,6 @@ function contactViews(users, notify) {
 }
 
 function taskViews(users) {
-  const ownerOptions = Object.fromEntries(users.map((u) => [u.id, u.name]));
   return {
     title: 'Tareas comerciales', singular: 'Tarea', resource: 'tasks',
     columns: [
@@ -726,7 +1000,7 @@ function taskViews(users) {
       { name: 'description', label: 'Descripción', type: 'textarea', max: 2000 },
       { name: 'status', label: 'Estado', type: 'select', options: TASK_STATUS },
       { name: 'priority', label: 'Prioridad', type: 'select', options: PRIORITY },
-      { name: 'assigned_to', label: 'Asignada a', type: 'select', options: ownerOptions },
+      { name: 'assigned_to', label: 'Asignada a', type: 'select', options: Object.fromEntries(users.map((u) => [u.id, u.name])) },
       { name: 'due_at', label: 'Vencimiento', type: 'datetime' },
     ],
     detailFields: [
@@ -739,63 +1013,141 @@ function taskViews(users) {
   };
 }
 
+function productsAdminView() {
+  return {
+    title: 'Catálogo de productos/servicios', singular: 'Producto', resource: 'products',
+    columns: [
+      { name: 'name', label: 'Producto' },
+      { name: 'description', label: 'Descripción' },
+      { name: 'price', label: 'Precio', render: fmtMoney },
+      { name: 'is_active', label: 'Activo', render: (v) => v ? 'Sí' : 'No' },
+    ],
+    filters: [],
+    formFields: [
+      { name: 'name', label: 'Nombre', required: true, max: 120 },
+      { name: 'description', label: 'Descripción', type: 'textarea', max: 500 },
+      { name: 'price', label: 'Precio (€)', type: 'number' },
+      { name: 'is_active', label: 'Activo', type: 'checkbox' },
+    ],
+  };
+}
+
+function customFieldsAdminView() {
+  return {
+    title: 'Campos personalizados', singular: 'Campo', resource: 'custom-fields',
+    columns: [
+      { name: 'label', label: 'Etiqueta' },
+      { name: 'key', label: 'Clave' },
+      { name: 'entity_type', label: 'Entidad', render: (v) => ENTITY_LABEL[v] || v },
+      { name: 'field_type', label: 'Tipo', render: (v) => FIELD_TYPES[v] || v },
+      { name: 'options', label: 'Opciones', render: (v) => Array.isArray(v) ? v.join(', ') : '—' },
+    ],
+    filters: [{ name: 'entity_type', label: 'Entidad', options: ENTITY_LABEL }],
+    formFields: [
+      { name: 'entity_type', label: 'Entidad', type: 'select', required: true, options: ENTITY_LABEL },
+      { name: 'key', label: 'Clave (minúsculas y _, ej: num_locales)', required: true, max: 40 },
+      { name: 'label', label: 'Etiqueta visible', required: true, max: 80 },
+      { name: 'field_type', label: 'Tipo', type: 'select', required: true, options: FIELD_TYPES },
+      { name: 'options_csv', label: 'Opciones (separadas por coma, solo tipo Lista)', max: 500 },
+    ],
+    // La API espera options como array; los campos no se editan (crear/borrar)
+    editable: false,
+    transformPayload: (payload) => {
+      const { options_csv, ...rest } = payload;
+      if (options_csv) rest.options = String(options_csv).split(',').map((s) => s.trim()).filter(Boolean);
+      return rest;
+    },
+  };
+}
+
 // ----------------------------------------------------------------
 // Shell principal
 // ----------------------------------------------------------------
-const TABS = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'pipeline', label: 'Pipeline' },
-  { id: 'leads', label: 'Leads' },
-  { id: 'companies', label: 'Empresas' },
-  { id: 'contacts', label: 'Contactos' },
-  { id: 'tasks', label: 'Tareas' },
-];
-
 function App() {
   const [session, setSessionState] = useState(getSession());
   const [tab, setTab] = useState('dashboard');
   const [toast, setToast] = useState(null);
   const [users, setUsers] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [customDefs, setCustomDefs] = useState({});
 
   const notify = useCallback((msg, type = 'ok') => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), 4000);
   }, []);
 
-  useEffect(() => {
-    if (session) api('/crm/users').then((r) => setUsers(r.data)).catch(() => {});
-  }, [session]);
+  const loadCatalogs = useCallback(() => {
+    api('/crm/users').then((r) => setUsers(r.data)).catch(() => {});
+    api('/crm/products', { query: { page_size: 100 } }).then((r) => setProducts(r.data)).catch(() => {});
+    api('/crm/custom-fields').then((r) => {
+      const byEntity = {};
+      for (const d of r.data) (byEntity[d.entity_type] = byEntity[d.entity_type] || []).push(d);
+      setCustomDefs(byEntity);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => { if (session) loadCatalogs(); }, [session]);
 
   if (!session) return html`<${Login} onLogin=${() => setSessionState(getSession())} />`;
 
+  const settings = session.organization?.settings || {};
+  const brandName = settings.brand_name || session.organization?.name || 'CRM';
+  const brandColor = settings.brand_color || '#4f46e5';
+
+  function onBrandChange(newSettings) {
+    const updated = { ...session, organization: { ...session.organization, settings: newSettings } };
+    setSession(updated);
+    setSessionState(updated);
+  }
+
+  const tabs = [
+    ['dashboard', 'Dashboard'], ['pipeline', 'Pipeline'], ['leads', 'Leads'],
+    ['companies', 'Empresas'], ['contacts', 'Contactos'], ['tasks', 'Tareas'],
+    ...(can('admin') ? [['admin', 'Administración']] : []),
+  ];
+
   const views = {
-    leads: leadViews(users, notify),
-    companies: companyViews(users),
-    contacts: contactViews(users, notify),
+    leads: { ...leadViews(users, products, notify), customDefs: customDefs.lead || [] },
+    companies: { ...companyViews(users), customDefs: customDefs.company || [] },
+    contacts: { ...contactViews(users, notify), customDefs: customDefs.contact || [] },
     tasks: taskViews(users),
   };
 
+  if (!can('read')) {
+    return html`
+      <div class="min-h-screen flex items-center justify-center">
+        <div class="bg-white rounded-2xl shadow p-8 text-center space-y-3">
+          <div class="font-semibold">Tu rol no tiene acceso al CRM</div>
+          <button class="text-sm text-indigo-600 hover:underline" onClick=${() => { setSession(null); setSessionState(null); }}>Salir</button>
+        </div>
+      </div>`;
+  }
+
   return html`
     <div class="min-h-screen">
-      <header class="bg-white border-b sticky top-0 z-20">
+      <header class="bg-white border-b sticky top-0 z-20" style=${{ borderTopWidth: '3px', borderTopColor: brandColor }}>
         <div class="max-w-7xl mx-auto px-4 flex items-center gap-6 h-14">
-          <div class="font-bold text-indigo-600">Zyra <span class="text-slate-700 font-medium">CRM</span></div>
+          <div class="font-bold truncate max-w-48" style=${{ color: brandColor }}>${brandName}</div>
           <nav class="flex gap-1 overflow-x-auto">
-            ${TABS.map((t) => html`
-              <button key=${t.id} onClick=${() => setTab(t.id)}
-                class="px-3 py-1.5 rounded-lg text-sm whitespace-nowrap ${tab === t.id ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}">
-                ${t.label}
+            ${tabs.map(([id, label]) => html`
+              <button key=${id} onClick=${() => { setTab(id); if (id !== 'admin') loadCatalogs(); }}
+                class="px-3 py-1.5 rounded-lg text-sm whitespace-nowrap ${tab === id ? 'text-white' : 'text-slate-600 hover:bg-slate-100'}"
+                style=${tab === id ? { backgroundColor: brandColor } : {}}>
+                ${label}
               </button>`)}
           </nav>
           <div class="ml-auto flex items-center gap-3 text-sm">
-            <span class="text-slate-500">${session.user.name} · ${session.user.role}</span>
+            <span class="text-slate-500 whitespace-nowrap">${session.user.name} · ${ROLES[session.user.role] || session.user.role}</span>
             <button class="text-slate-400 hover:text-red-600" onClick=${() => { setSession(null); setSessionState(null); }}>Salir</button>
           </div>
         </div>
       </header>
       <main class="max-w-7xl mx-auto px-4 py-6">
         ${tab === 'dashboard' && html`<${Dashboard} notify=${notify} />`}
-        ${tab === 'pipeline' && html`<${Pipeline} notify=${notify} users=${users} />`}
+        ${tab === 'pipeline' && html`<${Pipeline} notify=${notify} users=${users} products=${products} customDefs=${customDefs} />`}
+        ${tab === 'admin' && html`
+          <${Admin} notify=${notify} onBrandChange=${onBrandChange}
+            productsView=${productsAdminView()} customFieldsView=${customFieldsAdminView()} />`}
         ${views[tab] && html`<${TableView} key=${tab} ...${views[tab]} notify=${notify} />`}
       </main>
       <${Toast} toast=${toast} />

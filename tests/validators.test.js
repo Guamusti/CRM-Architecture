@@ -63,3 +63,26 @@ test('tags: nombre obligatorio y asignación con UUIDs válidos', () => {
   });
   assert.equal(ok.entity_type, 'lead');
 });
+
+test('productización: esquemas de admin estrictos', () => {
+  // select sin opciones rechazado
+  assert.throws(() => schemas.customFieldCreate.parse({
+    entity_type: 'lead', key: 'nivel', label: 'Nivel', field_type: 'select',
+  }));
+  // clave con mayúsculas/espacios rechazada
+  assert.throws(() => schemas.customFieldCreate.parse({
+    entity_type: 'lead', key: 'Mi Campo', label: 'X', field_type: 'text',
+  }));
+  const ok = schemas.customFieldCreate.parse({
+    entity_type: 'lead', key: 'nivel', label: 'Nivel', field_type: 'select', options: ['A', 'B'],
+  });
+  assert.equal(ok.field_type, 'select');
+  // contraseña corta en alta de usuario
+  assert.throws(() => schemas.userCreate.parse({ name: 'X Y', email: 'x@y.com', password: 'corta', role: 'worker' }));
+  // brand_color debe ser hex
+  assert.throws(() => schemas.settingsUpdate.parse({ brand_color: 'rojo' }));
+  // custom values: clave inválida rechazada
+  assert.throws(() => schemas.leadCreate.parse({ title: 'L', custom: { 'DROP TABLE': 1 } }));
+  const lead = schemas.leadCreate.parse({ title: 'L', custom: { tratamiento: 'Ortodoncia' } });
+  assert.equal(lead.custom.tratamiento, 'Ortodoncia');
+});

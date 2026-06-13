@@ -1,4 +1,9 @@
-# Zyra CRM — Arquitectura
+# CRM white-label — Arquitectura
+
+> Pivote de producto: lo que nació como módulo CRM interno de Zyra es ahora
+> un **CRM SaaS multi-tenant replicable y vendible** a empresas (white-label).
+> Visión de producto y mapa de funcionalidades: [PRODUCT.md](PRODUCT.md).
+> La integración con Zyra pasa a ser "Zyra como un tenant más".
 
 ## 1. Diagnóstico de partida
 
@@ -106,10 +111,17 @@ Todos bajo `/api/crm`, autenticados, validados, paginados y auditados:
   (registrada en auditoría) y anonimización irreversible (datos personales +
   notas asociadas; reservada a owner/admin). Endpoint `/api/crm/users` para
   selects de asignación.
-- **Fase 4 — Integración Zyra**: mapeo `organization_id`↔`store_id`, sustituir
-  auth, montar rutas en el server de Zyra, enlazar HQ.
+- **Fase P (hecha) — Productización white-label**: signup self-service
+  (org + owner + pipeline), gestión de usuarios con reglas anti-lockout,
+  catálogo de productos por tenant (sustituye al enum fijo de productos Zyra),
+  campos personalizados por tenant (definiciones + valores jsonb validados),
+  branding por organización (nombre y color), importación CSV (hasta 500
+  filas validadas una a una) y email único global para el login.
+- **Fase 4 — Comercialización**: verificación de email, recuperación de
+  contraseña, facturación (Stripe) y límites por plan, MFA. Ver PRODUCT.md.
 - **Fase 5 — Integraciones externas**: email, calendario, WhatsApp (los campos
-  `source` y el activity log ya están preparados).
+  `source` y el activity log ya están preparados). Zyra se integra como un
+  tenant más de la plataforma.
 
 ## 7. RGPD
 

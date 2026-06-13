@@ -7,9 +7,9 @@ const { forbidden } = require('../utils/httpError');
 //           crm:assign, crm:close, crm:pipeline:manage
 // 'caja' no tiene acceso al CRM.
 const ROLE_PERMISSIONS = {
-  owner:   ['crm:read', 'crm:create', 'crm:update', 'crm:delete', 'crm:assign', 'crm:close', 'crm:pipeline:manage', 'crm:export', 'crm:gdpr:manage'],
-  admin:   ['crm:read', 'crm:create', 'crm:update', 'crm:delete', 'crm:assign', 'crm:close', 'crm:pipeline:manage', 'crm:export', 'crm:gdpr:manage'],
-  manager: ['crm:read', 'crm:create', 'crm:update', 'crm:assign', 'crm:close', 'crm:export'],
+  owner:   ['crm:read', 'crm:create', 'crm:update', 'crm:delete', 'crm:assign', 'crm:close', 'crm:pipeline:manage', 'crm:export', 'crm:gdpr:manage', 'crm:admin', 'crm:import'],
+  admin:   ['crm:read', 'crm:create', 'crm:update', 'crm:delete', 'crm:assign', 'crm:close', 'crm:pipeline:manage', 'crm:export', 'crm:gdpr:manage', 'crm:admin', 'crm:import'],
+  manager: ['crm:read', 'crm:create', 'crm:update', 'crm:assign', 'crm:close', 'crm:export', 'crm:import'],
   // worker: lectura limitada a lo asignado (scoping adicional en servicios),
   // crear notas/tareas y actualizar estado.
   worker:  ['crm:read', 'crm:create:limited', 'crm:update:limited'],

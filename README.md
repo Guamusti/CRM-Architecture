@@ -1,9 +1,11 @@
-# Zyra CRM
+# CRM white-label
 
-Módulo CRM multi-tenant para Zyra (SaaS B2B para pequeños negocios en España).
-Backend Node.js + Express + PostgreSQL, diseñado con seguridad zero-trust,
-auditoría append-only y preparación RGPD desde el primer commit.
+CRM SaaS multi-tenant **replicable y vendible a empresas**: cada cliente se da
+de alta en autoservicio, configura su catálogo, pipeline, campos
+personalizados y marca, e invita a su equipo. Backend Node.js + Express +
+PostgreSQL con seguridad zero-trust, auditoría append-only y RGPD de serie.
 
+- Visión de producto (mapa vs Salesforce): [docs/PRODUCT.md](docs/PRODUCT.md)
 - Arquitectura y plan por fases: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Seguridad y threat model: [docs/SECURITY.md](docs/SECURITY.md)
 
@@ -35,13 +37,14 @@ curl -s localhost:3000/api/crm/leads -X POST \
 
 ## Estado
 
-Fases 1–3 completadas:
-- **Backend**: auth, permisos por rol, multi-tenant, CRUD de
-  companies/contacts/leads/opportunities/tasks, pipeline configurable, cierre
-  de oportunidades, conversión lead→oportunidad, etiquetas, notas, historial
-  de actividad, dashboard y RGPD (exportación + anonimización de contactos).
-- **Frontend**: `http://localhost:3000/crm` — dashboard, kanban, tablas con
-  filtros, fichas de detalle con notas e historial, formularios (React + htm
-  por CDN, sin build, compatible con CSP).
+Fases 1–3 + Fase P (productización) completadas:
+- **Núcleo CRM**: leads, empresas, contactos, oportunidades, pipeline kanban
+  configurable, conversión lead→oportunidad, tareas, notas, etiquetas,
+  historial de actividad, dashboard y RGPD (exportar/anonimizar contactos).
+- **Producto SaaS**: signup self-service de organizaciones, gestión de
+  usuarios y roles, catálogo de productos por empresa, campos personalizados
+  por empresa, branding white-label (nombre + color), importación CSV.
+- **Frontend** en `http://localhost:3000/crm` (React + htm self-hosted, sin
+  build, CSP estricta). El signup está en la propia pantalla de login.
 
-Siguiente: Fase 4 (integración con Zyra) — ver plan en docs/ARCHITECTURE.md.
+Siguiente: Fase 4 (comercialización: email, facturación, MFA) — ver docs/PRODUCT.md.

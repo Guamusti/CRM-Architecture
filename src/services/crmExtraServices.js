@@ -45,7 +45,7 @@ async function convertLead(req, leadId, data) {
       priority: lead.priority,
       owner_user_id: lead.owner_user_id || ctx.user.id,
       main_pain: lead.main_pain,
-      zyra_product: lead.zyra_product,
+      product_id: lead.product_id,
       source: lead.source,
       next_step: lead.next_step,
       next_follow_up_at: lead.next_follow_up_at,

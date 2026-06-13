@@ -100,4 +100,45 @@ router.get('/dashboard', requirePermission('crm:read'), crm.getDashboard);
 // Usuarios del tenant para selects de asignación (datos mínimos).
 router.get('/users', requirePermission('crm:read'), crm.listUsers);
 
+// ----------------------------------------------------------------
+// Productización (white-label)
+// ----------------------------------------------------------------
+const admin = require('../../controllers/adminController');
+
+// Catálogo de productos del tenant: lectura para todos los roles CRM,
+// gestión solo para owner/admin.
+{
+  const ctrl = crudController(services.products);
+  router.get('/products', requirePermission('crm:read'), validateQuery(schemas.productListQuery), ctrl.list);
+  router.post('/products', writeLimiter, requirePermission('crm:admin'), validateBody(schemas.productCreate), ctrl.create);
+  router.patch('/products/:id', writeLimiter, requirePermission('crm:admin'), validateParams(idParams), validateBody(schemas.productUpdate), ctrl.update);
+  router.delete('/products/:id', writeLimiter, requirePermission('crm:admin'), validateParams(idParams), ctrl.remove);
+}
+
+// Campos personalizados por tenant (definiciones).
+// options llega como array validado; se serializa para la columna jsonb.
+function serializeOptions(req, res, next) {
+  if (Array.isArray(req.body.options)) req.body.options = JSON.stringify(req.body.options);
+  next();
+}
+{
+  const ctrl = crudController(services.customFields);
+  router.get('/custom-fields', requirePermission('crm:read'), validateQuery(schemas.customFieldListQuery), ctrl.list);
+  router.post('/custom-fields', writeLimiter, requirePermission('crm:admin'), validateBody(schemas.customFieldCreate), serializeOptions, ctrl.create);
+  router.patch('/custom-fields/:id', writeLimiter, requirePermission('crm:admin'), validateParams(idParams), validateBody(schemas.customFieldUpdate), serializeOptions, ctrl.update);
+  router.delete('/custom-fields/:id', writeLimiter, requirePermission('crm:admin'), validateParams(idParams), ctrl.remove);
+}
+
+// Gestión de usuarios del tenant (owner/admin; reglas anti-lockout en servicio).
+router.get('/admin/users', requirePermission('crm:admin'), admin.listUsers);
+router.post('/admin/users', writeLimiter, requirePermission('crm:admin'), validateBody(schemas.userCreate), admin.createUser);
+router.patch('/admin/users/:id', writeLimiter, requirePermission('crm:admin'), validateParams(idParams), validateBody(schemas.userUpdate), admin.updateUser);
+
+// Branding/ajustes de la organización.
+router.get('/settings', requirePermission('crm:read'), admin.getSettings);
+router.patch('/settings', writeLimiter, requirePermission('crm:admin'), validateBody(schemas.settingsUpdate), admin.updateSettings);
+
+// Importación masiva (leads/companies/contacts).
+router.post('/import/:resource', writeLimiter, requirePermission('crm:import'), validateBody(schemas.importBody), admin.importRows);
+
 module.exports = router;

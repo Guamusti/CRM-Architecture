@@ -1,7 +1,7 @@
 'use strict';
 const {
   z, uuid, shortText, optionalText, email, phone, money, isoDate, isoDateTime,
-  priority, zyraProduct, leadSource, entityType, legalBasis, listQueryBase,
+  priority, leadSource, entityType, legalBasis, listQueryBase, customValues,
 } = require('./common');
 
 // ----------------------------------------------------------------
@@ -25,6 +25,7 @@ const companyCreate = z.object({
   status: z.enum(['active', 'inactive', 'prospect', 'customer', 'former_customer']).optional(),
   legal_basis: legalBasis.optional(),
   data_retention_until: isoDate.nullish(),
+  custom: customValues.optional(),
 }).strict();
 
 const companyUpdate = companyCreate.partial();
@@ -52,6 +53,7 @@ const contactCreate = z.object({
   consent_source: optionalText(120),
   consent_at: isoDateTime.nullish(),
   data_retention_until: isoDate.nullish(),
+  custom: customValues.optional(),
 }).strict();
 
 const contactUpdate = contactCreate.partial();
@@ -76,11 +78,12 @@ const leadCreate = z.object({
   priority: priority.optional(),
   owner_user_id: uuid.nullish(),
   main_pain: optionalText(500),
-  zyra_product: zyraProduct.nullish(),
+  product_id: uuid.nullish(),
   estimated_value: money.nullish(),
   next_step: optionalText(500),
   next_follow_up_at: isoDateTime.nullish(),
   lost_reason: optionalText(500),
+  custom: customValues.optional(),
 }).strict();
 
 const leadUpdate = leadCreate.partial();
@@ -91,7 +94,7 @@ const leadListQuery = z.object({
   priority: priority.optional(),
   source: leadSource.optional(),
   owner_user_id: uuid.optional(),
-  zyra_product: zyraProduct.optional(),
+  product_id: uuid.optional(),
   company_id: uuid.optional(),
   follow_up_before: isoDateTime.optional(),
 }).strict();
@@ -112,10 +115,11 @@ const opportunityCreate = z.object({
   priority: priority.optional(),
   owner_user_id: uuid.nullish(),
   main_pain: optionalText(500),
-  zyra_product: zyraProduct.nullish(),
+  product_id: uuid.nullish(),
   source: optionalText(30),
   next_step: optionalText(500),
   next_follow_up_at: isoDateTime.nullish(),
+  custom: customValues.optional(),
 }).strict();
 
 // status/closed_at/lost_reason se gestionan vía el flujo de cierre,
@@ -133,7 +137,7 @@ const opportunityListQuery = z.object({
   stage_id: uuid.optional(),
   priority: priority.optional(),
   owner_user_id: uuid.optional(),
-  zyra_product: zyraProduct.optional(),
+  product_id: uuid.optional(),
   company_id: uuid.optional(),
 }).strict();
 
@@ -212,6 +216,72 @@ const tagListQuery = z.object({
   entity_id: uuid.optional(),
 }).strict();
 
+// ----------------------------------------------------------------
+// Productización: catálogo, campos personalizados, usuarios, settings
+// ----------------------------------------------------------------
+const productCreate = z.object({
+  name: shortText(120),
+  description: optionalText(500),
+  price: money.nullish(),
+  is_active: z.boolean().optional(),
+}).strict();
+
+const productUpdate = productCreate.partial();
+
+const productListQuery = z.object({
+  ...listQueryBase,
+  is_active: z.coerce.boolean().optional(),
+}).strict();
+
+const customFieldCreate = z.object({
+  entity_type: entityType,
+  key: z.string().trim().regex(/^[a-z][a-z0-9_]{0,39}$/, 'Clave inválida (minúsculas, dígitos y _)'),
+  label: shortText(80),
+  field_type: z.enum(['text', 'number', 'date', 'boolean', 'select']),
+  options: z.array(z.string().trim().min(1).max(80)).max(50).nullish(),
+  is_required: z.boolean().optional(),
+  position: z.coerce.number().int().min(0).max(1000).optional(),
+}).strict().refine(
+  (d) => d.field_type !== 'select' || (Array.isArray(d.options) && d.options.length > 0),
+  { message: 'Los campos select requieren options' }
+);
+
+const customFieldUpdate = z.object({
+  label: shortText(80).optional(),
+  options: z.array(z.string().trim().min(1).max(80)).max(50).nullish(),
+  is_required: z.boolean().optional(),
+  position: z.coerce.number().int().min(0).max(1000).optional(),
+}).strict();
+
+const customFieldListQuery = z.object({
+  ...listQueryBase,
+  entity_type: entityType.optional(),
+}).strict();
+
+const userCreate = z.object({
+  name: shortText(120),
+  email: email,
+  password: z.string().min(10).max(128),
+  role: z.enum(['owner', 'admin', 'manager', 'worker', 'caja']),
+}).strict();
+
+const userUpdate = z.object({
+  name: shortText(120).optional(),
+  role: z.enum(['owner', 'admin', 'manager', 'worker', 'caja']).optional(),
+  is_active: z.boolean().optional(),
+}).strict();
+
+const settingsUpdate = z.object({
+  brand_name: shortText(60).nullish(),
+  brand_color: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).nullish(),
+  currency: z.string().trim().length(3).toUpperCase().optional(),
+  locale: z.string().trim().max(10).optional(),
+}).strict();
+
+const importBody = z.object({
+  rows: z.array(z.record(z.string(), z.unknown())).min(1).max(500),
+}).strict();
+
 const noteCreate = z.object({
   entity_type: entityType,
   entity_id: uuid,
@@ -233,4 +303,6 @@ module.exports = {
   taskCreate, taskUpdate, taskListQuery,
   noteCreate, activityListQuery,
   leadConvert, tagCreate, tagAssign, tagListQuery,
+  productCreate, productUpdate, productListQuery, customFieldCreate, customFieldUpdate, customFieldListQuery,
+  userCreate, userUpdate, settingsUpdate, importBody,
 };

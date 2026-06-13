@@ -17,8 +17,14 @@ const isoDate = z.string().date();
 const isoDateTime = z.string().datetime({ offset: true });
 
 const priority = z.enum(['low', 'medium', 'high', 'urgent']);
-const zyraProduct = z.enum(['tpv', 'erp', 'inventario', 'fichajes', 'tareas', 'crm', 'suite']);
 const leadSource = z.enum(['web', 'referral', 'cold_call', 'email', 'social', 'event', 'partner', 'inbound', 'other']);
+
+// Valores de campos personalizados: el tipo concreto se valida en el
+// servicio contra las definiciones del tenant. Aquí: forma y límites.
+const customValues = z.record(
+  z.string().regex(/^[a-z][a-z0-9_]{0,39}$/, 'Clave de campo personalizado inválida'),
+  z.union([z.string().max(500), z.number(), z.boolean(), z.null()])
+).refine((obj) => Object.keys(obj).length <= 30, { message: 'Máximo 30 campos personalizados' });
 const entityType = z.enum(['lead', 'company', 'contact', 'opportunity']);
 const legalBasis = z.enum(['legitimate_interest', 'contract', 'consent', 'legal_obligation']);
 
@@ -36,5 +42,5 @@ const listQueryBase = {
 
 module.exports = {
   z, uuid, shortText, optionalText, email, phone, money, isoDate, isoDateTime,
-  priority, zyraProduct, leadSource, entityType, legalBasis, idParams, listQueryBase,
+  priority, leadSource, entityType, legalBasis, idParams, listQueryBase, customValues,
 };

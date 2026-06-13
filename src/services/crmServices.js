@@ -13,6 +13,8 @@ const opportunities = createService(configs.opportunities);
 const stages = createService(configs.stages);
 const tasks = createService(configs.tasks);
 const notes = createService(configs.notes);
+const products = createService(configs.products);
+const customFields = createService(configs.customFields);
 
 // ----------------------------------------------------------------
 // Validación de referencias cruzadas dentro del tenant: evita
@@ -23,6 +25,7 @@ const REF_CONFIGS = {
   contact_id: configs.contacts,
   lead_id: configs.leads,
   stage_id: configs.stages,
+  product_id: configs.products,
 };
 
 const ENTITY_TYPE_CONFIGS = {
@@ -53,6 +56,16 @@ async function assertRefsInTenant(organizationId, data) {
       [userId, organizationId]
     );
     if (result.rows.length === 0) throw badRequest('El usuario asignado no existe en esta organización');
+  }
+}
+
+// Validación completa de un payload de entidad: referencias dentro del
+// tenant + valores de campos personalizados contra sus definiciones.
+async function validatePayload(organizationId, entityType, data) {
+  await assertRefsInTenant(organizationId, data);
+  if (data.custom !== undefined) {
+    const { validateCustomFields } = require('./adminService');
+    await validateCustomFields(organizationId, entityType, data.custom);
   }
 }
 
@@ -177,7 +190,7 @@ async function getDashboard(req) {
 }
 
 module.exports = {
-  companies, contacts, leads, opportunities, stages, tasks, notes,
-  assertRefsInTenant, closeOpportunity, getPipeline, getDashboard,
+  companies, contacts, leads, opportunities, stages, tasks, notes, products, customFields,
+  assertRefsInTenant, validatePayload, closeOpportunity, getPipeline, getDashboard,
   listActivities: activityRepo.listActivities,
 };

@@ -21,14 +21,14 @@ function crudController(service) {
     },
     async create(req, res, next) {
       try {
-        await services.assertRefsInTenant(req.user.organizationId, req.body);
+        await services.validatePayload(req.user.organizationId, service.config.entityType, req.body);
         const row = await service.create(req, req.body);
         res.status(201).json({ data: row });
       } catch (err) { next(err); }
     },
     async update(req, res, next) {
       try {
-        await services.assertRefsInTenant(req.user.organizationId, req.body);
+        await services.validatePayload(req.user.organizationId, service.config.entityType, req.body);
         const row = await service.update(req, req.params.id, req.body);
         res.json({ data: row });
       } catch (err) { next(err); }

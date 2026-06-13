@@ -21,11 +21,42 @@ const loginSchema = z.object({
   password: z.string().min(8).max(128),
 }).strict();
 
+const signupSchema = z.object({
+  organization_name: z.string().trim().min(2).max(200),
+  name: z.string().trim().min(2).max(120),
+  email: z.string().trim().toLowerCase().email().max(254),
+  password: z.string().min(10).max(128),
+}).strict();
+
+// Alta self-service de una organización (producto SaaS):
+// crea tenant + owner + pipeline por defecto y devuelve sesión.
+router.post('/signup', authLimiter, validateBody(signupSchema), async (req, res, next) => {
+  try {
+    const adminService = require('../services/adminService');
+    const { organization, user } = await adminService.signup(req.body);
+    const token = jwt.sign(
+      { sub: user.id, org: organization.id, role: user.role, name: user.name },
+      env.jwtSecret,
+      { algorithm: 'HS256', expiresIn: env.jwtExpiresIn }
+    );
+    res.status(201).json({
+      data: {
+        token,
+        user: { id: user.id, name: user.name, role: user.role },
+        organization: { name: organization.name, settings: organization.settings },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/login', authLimiter, validateBody(loginSchema), async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const result = await db.query(
-      `SELECT u.id, u.organization_id, u.password_hash, u.role, u.name
+      `SELECT u.id, u.organization_id, u.password_hash, u.role, u.name,
+              o.name AS org_name, o.settings AS org_settings
        FROM users u
        JOIN organizations o ON o.id = u.organization_id AND o.deleted_at IS NULL
        WHERE u.email = $1 AND u.deleted_at IS NULL AND u.is_active
@@ -46,7 +77,13 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req, res, n
       { algorithm: 'HS256', expiresIn: env.jwtExpiresIn }
     );
     logger.info('login_ok', { userId: user.id, org: user.organization_id });
-    res.json({ data: { token, user: { id: user.id, name: user.name, role: user.role } } });
+    res.json({
+      data: {
+        token,
+        user: { id: user.id, name: user.name, role: user.role },
+        organization: { name: user.org_name, settings: user.org_settings },
+      },
+    });
   } catch (err) {
     next(err);
   }

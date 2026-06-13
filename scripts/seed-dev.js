@@ -37,6 +37,13 @@ async function main() {
     [orgId, hash]
   );
   await pool.query('SELECT crm_create_default_pipeline($1, $2)', [orgId, user.rows[0].id]);
+  await pool.query(
+    `INSERT INTO crm_products (organization_id, name, description, price, created_by) VALUES
+     ($1, 'Plan Básico', 'Suscripción mensual básica', 29.00, $2),
+     ($1, 'Plan Pro', 'Suscripción mensual profesional', 79.00, $2),
+     ($1, 'Implantación', 'Puesta en marcha y formación', 450.00, $2)`,
+    [orgId, user.rows[0].id]
+  );
   await pool.end();
 
   console.log('Seed de desarrollo creado:');
