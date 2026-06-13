@@ -71,8 +71,33 @@ router.get('/pipeline', requirePermission('crm:read'), crm.getPipeline);
   router.delete('/notes/:id', writeLimiter, requirePermission('crm:update'), validateParams(idParams), ctrl.remove);
 }
 
+// Conversión lead -> oportunidad: decisión comercial relevante,
+// reservada a quien puede cerrar oportunidades (owner/admin/manager).
+router.post(
+  '/leads/:id/convert',
+  writeLimiter,
+  requirePermission('crm:close'),
+  validateParams(idParams),
+  validateBody(schemas.leadConvert),
+  crm.convertLead
+);
+
+// Etiquetas
+router.get('/tags', requirePermission('crm:read'), validateQuery(schemas.tagListQuery), crm.listTags);
+router.post('/tags', writeLimiter, requirePermission('crm:update'), validateBody(schemas.tagCreate), crm.createTag);
+router.delete('/tags/:id', writeLimiter, requirePermission('crm:delete'), validateParams(idParams), crm.deleteTag);
+router.post('/tags/assign', writeLimiter, requirePermission('crm:update'), validateBody(schemas.tagAssign), crm.assignTag);
+router.post('/tags/unassign', writeLimiter, requirePermission('crm:update'), validateBody(schemas.tagAssign), crm.unassignTag);
+
+// RGPD: exportación (owner/admin/manager) y anonimización (owner/admin)
+router.get('/contacts/:id/export', requirePermission('crm:export'), validateParams(idParams), crm.exportContact);
+router.post('/contacts/:id/anonymize', writeLimiter, requirePermission('crm:gdpr:manage'), validateParams(idParams), crm.anonymizeContact);
+
 // Historial de actividad y dashboard.
 router.get('/activities', requirePermission('crm:read'), validateQuery(schemas.activityListQuery), crm.listActivities);
 router.get('/dashboard', requirePermission('crm:read'), crm.getDashboard);
+
+// Usuarios del tenant para selects de asignación (datos mínimos).
+router.get('/users', requirePermission('crm:read'), crm.listUsers);
 
 module.exports = router;

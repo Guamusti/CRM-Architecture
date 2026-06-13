@@ -1,4 +1,5 @@
 'use strict';
+const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -41,6 +42,11 @@ app.use(cors({
 
 app.use(express.json({ limit: '100kb' }));
 app.use(apiLimiter);
+
+// Frontend CRM (estático, sin build). La lógica de permisos vive en el
+// backend; el frontend solo oculta controles como mejora de UX.
+app.use(express.static(path.join(__dirname, '..', 'public')));
+app.get('/crm', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'crm.html')));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/auth', authRoutes);

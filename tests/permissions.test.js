@@ -38,3 +38,11 @@ test('rol desconocido no tiene permisos', () => {
   assert.equal(hasPermission('superhacker', 'crm:read'), false);
   assert.equal(hasPermission(undefined, 'crm:read'), false);
 });
+
+test('RGPD: exportación para manager+, anonimización solo owner/admin', () => {
+  assert.equal(hasPermission('manager', 'crm:export'), true);
+  assert.equal(hasPermission('manager', 'crm:gdpr:manage'), false);
+  assert.equal(hasPermission('worker', 'crm:export'), false);
+  assert.equal(hasPermission('owner', 'crm:gdpr:manage'), true);
+  assert.equal(hasPermission('admin', 'crm:gdpr:manage'), true);
+});

@@ -93,14 +93,19 @@ Todos bajo `/api/crm`, autenticados, validados, paginados y auditados:
 
 ## 6. Plan por fases
 
-- **Fase 1 (este commit)** — Migraciones, seguridad transversal, CRUD completo,
+- **Fase 1 (hecha)** — Migraciones, seguridad transversal, CRUD completo,
   pipeline, cierre de oportunidades, notas, actividad, dashboard, tests unitarios.
-- **Fase 2 — Frontend**: `crm.html` (React CDN + Tailwind), dashboard, kanban,
-  tabla de leads con filtros, fichas de detalle, formularios. El frontend solo
-  oculta botones por UX; el backend decide siempre.
-- **Fase 3 — Profundización**: tags end-to-end (API), conversión lead→oportunidad,
-  exportación RGPD de un contacto, anonimización, `crm_audit_log` separado si
-  hace falta, tests de integración con BD efímera.
+- **Fase 2 (hecha)** — Frontend `public/crm.html` + `public/js/crm-app.js`
+  (React UMD + htm por CDN, sin build y compatible con CSP — sin Babel ni
+  `unsafe-eval`): dashboard, kanban con cambio de etapa y cierre won/lost,
+  tablas de leads/empresas/contactos/tareas con filtros y paginación, fichas
+  de detalle con notas e historial, formularios de creación/edición. El
+  frontend solo oculta botones por UX; el backend decide siempre.
+- **Fase 3 (hecha)** — Conversión lead→oportunidad transaccional y auditada,
+  API de etiquetas (crear/asignar/quitar), exportación RGPD de contacto
+  (registrada en auditoría) y anonimización irreversible (datos personales +
+  notas asociadas; reservada a owner/admin). Endpoint `/api/crm/users` para
+  selects de asignación.
 - **Fase 4 — Integración Zyra**: mapeo `organization_id`↔`store_id`, sustituir
   auth, montar rutas en el server de Zyra, enlazar HQ.
 - **Fase 5 — Integraciones externas**: email, calendario, WhatsApp (los campos
@@ -115,4 +120,7 @@ Todos bajo `/api/crm`, autenticados, validados, paginados y auditados:
 - Activity log = trazabilidad de todo acceso de escritura.
 - Minimización: solo datos de contacto profesional; sin categorías especiales.
 - Los logs de aplicación nunca incluyen datos personales (regla en `logger.js`).
-- Pendiente (Fase 3): endpoints de exportación y anonimización por contacto.
+- Exportación: `GET /api/crm/contacts/:id/export` (owner/admin/manager, auditada).
+- Anonimización: `POST /api/crm/contacts/:id/anonymize` (owner/admin) — borra
+  irreversiblemente nombre/email/teléfono/cargo/consentimiento y retira las
+  notas asociadas; queda registrada en el activity log.

@@ -33,7 +33,7 @@ const contacts = {
   table: 'crm_contacts',
   selectColumns: `id, company_id, first_name, last_name, email, phone, job_title,
     is_primary, owner_user_id, legal_basis, consent_status, consent_source,
-    consent_at, data_retention_until, ${AUDIT_COLS}`,
+    consent_at, data_retention_until, anonymized_at, ${AUDIT_COLS}`,
   columns: ['company_id', 'first_name', 'last_name', 'email', 'phone', 'job_title',
     'is_primary', 'owner_user_id', 'legal_basis', 'consent_status', 'consent_source',
     'consent_at', 'data_retention_until'],

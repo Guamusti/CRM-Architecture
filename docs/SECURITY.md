@@ -54,9 +54,12 @@ server-side en cada operación.
   Supabase): fijar CA en producción si el proveedor lo permite.
 - **Sin RLS de PostgreSQL**: el aislamiento de tenant es de aplicación. Si se
   consolida Supabase, añadir RLS como segunda barrera (defensa en profundidad).
-- **Exportación/anonimización RGPD**: campos preparados, endpoints en Fase 3.
 - **Sin bloqueo de cuenta tras N fallos**: el rate limit por IP no cubre ataques
-  distribuidos; añadir contador por cuenta en Fase 3.
+  distribuidos; añadir contador por cuenta antes de producción.
+- **Frontend**: el JWT se guarda en sessionStorage (se borra al cerrar pestaña);
+  un XSS lo expondría, pero la CSP prohíbe scripts inline y de orígenes no
+  declarados, React escapa todo el contenido y no se usa `dangerouslySetInnerHTML`.
+  Los CDNs (unpkg/jsdelivr) deberían fijarse con SRI antes de producción.
 
 ## Reglas operativas
 

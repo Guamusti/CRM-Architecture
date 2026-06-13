@@ -190,6 +190,28 @@ const taskListQuery = z.object({
 // ----------------------------------------------------------------
 // Notas y actividades
 // ----------------------------------------------------------------
+const leadConvert = z.object({
+  stage_id: uuid.optional(),
+  title: shortText(200).optional(),
+  amount: money.nullish(),
+}).strict();
+
+const tagCreate = z.object({
+  name: shortText(50),
+  color: optionalText(20),
+}).strict();
+
+const tagAssign = z.object({
+  tag_id: uuid,
+  entity_type: entityType,
+  entity_id: uuid,
+}).strict();
+
+const tagListQuery = z.object({
+  entity_type: entityType.optional(),
+  entity_id: uuid.optional(),
+}).strict();
+
 const noteCreate = z.object({
   entity_type: entityType,
   entity_id: uuid,
@@ -210,4 +232,5 @@ module.exports = {
   stageCreate, stageUpdate,
   taskCreate, taskUpdate, taskListQuery,
   noteCreate, activityListQuery,
+  leadConvert, tagCreate, tagAssign, tagListQuery,
 };

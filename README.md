@@ -35,7 +35,13 @@ curl -s localhost:3000/api/crm/leads -X POST \
 
 ## Estado
 
-Fase 1 completada: base de datos, auth, permisos por rol, multi-tenant,
-CRUD de companies/contacts/leads/opportunities/tasks, pipeline configurable,
-cierre de oportunidades, notas, historial de actividad y dashboard.
-Siguiente: Fase 2 (frontend) — ver plan en docs/ARCHITECTURE.md.
+Fases 1–3 completadas:
+- **Backend**: auth, permisos por rol, multi-tenant, CRUD de
+  companies/contacts/leads/opportunities/tasks, pipeline configurable, cierre
+  de oportunidades, conversión lead→oportunidad, etiquetas, notas, historial
+  de actividad, dashboard y RGPD (exportación + anonimización de contactos).
+- **Frontend**: `http://localhost:3000/crm` — dashboard, kanban, tablas con
+  filtros, fichas de detalle con notas e historial, formularios (React + htm
+  por CDN, sin build, compatible con CSP).
+
+Siguiente: Fase 4 (integración con Zyra) — ver plan en docs/ARCHITECTURE.md.

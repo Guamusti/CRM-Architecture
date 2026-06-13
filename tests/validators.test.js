@@ -46,3 +46,20 @@ test('cierre de oportunidad valida estados', () => {
   const ok = schemas.opportunityClose.parse({ status: 'lost', lost_reason: 'precio' });
   assert.equal(ok.status, 'lost');
 });
+
+test('conversión de lead: solo campos permitidos', () => {
+  assert.throws(() => schemas.leadConvert.parse({ status: 'converted' }));
+  const ok = schemas.leadConvert.parse({ amount: 500 });
+  assert.equal(ok.amount, 500);
+});
+
+test('tags: nombre obligatorio y asignación con UUIDs válidos', () => {
+  assert.throws(() => schemas.tagCreate.parse({ name: '' }));
+  assert.throws(() => schemas.tagAssign.parse({ tag_id: 'x', entity_type: 'lead', entity_id: 'y' }));
+  const ok = schemas.tagAssign.parse({
+    tag_id: '00000000-0000-0000-0000-000000000001',
+    entity_type: 'lead',
+    entity_id: '00000000-0000-0000-0000-000000000002',
+  });
+  assert.equal(ok.entity_type, 'lead');
+});
