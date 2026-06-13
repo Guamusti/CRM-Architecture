@@ -19,9 +19,10 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      // El frontend Zyra usa React/Tailwind por CDN sin build
-      scriptSrc: ["'self'", 'https://unpkg.com', 'https://cdn.jsdelivr.net'],
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+      // Librerías self-hosted en /vendor; el runtime de Tailwind
+      // inyecta un <style>, de ahí el unsafe-inline en estilos.
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:'],
       connectSrc: ["'self'"],
       frameAncestors: ["'none'"],

@@ -18,20 +18,21 @@ async function convertLead(req, leadId, data) {
     if (lead.status === 'lost') throw conflict('Un lead perdido no puede convertirse');
 
     // Etapa: la indicada o la primera abierta del pipeline
-    let stageId = data.stage_id;
-    if (stageId) {
-      const stage = await repo.getById(configs.stages, ctx.organizationId, stageId, client);
+    let stage;
+    if (data.stage_id) {
+      stage = await repo.getById(configs.stages, ctx.organizationId, data.stage_id, client);
       if (!stage) throw badRequest('stage_id no existe en esta organización');
     } else {
       const first = await client.query(
-        `SELECT id FROM crm_pipeline_stages
+        `SELECT id, probability_default FROM crm_pipeline_stages
          WHERE organization_id = $1 AND deleted_at IS NULL AND NOT is_won AND NOT is_lost
          ORDER BY position ASC LIMIT 1`,
         [ctx.organizationId]
       );
       if (!first.rows.length) throw badRequest('No hay etapas abiertas en el pipeline');
-      stageId = first.rows[0].id;
+      stage = first.rows[0];
     }
+    const stageId = stage.id;
 
     const opp = await repo.insert(configs.opportunities, ctx.organizationId, ctx.user.id, {
       title: data.title || lead.title,
@@ -40,6 +41,7 @@ async function convertLead(req, leadId, data) {
       lead_id: lead.id,
       stage_id: stageId,
       amount: data.amount !== undefined ? data.amount : lead.estimated_value,
+      probability: stage.probability_default ?? null,
       priority: lead.priority,
       owner_user_id: lead.owner_user_id || ctx.user.id,
       main_pain: lead.main_pain,
