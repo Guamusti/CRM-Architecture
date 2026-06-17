@@ -54,6 +54,16 @@ router.post(
   crm.closeOpportunity
 );
 
+// Líneas de producto de una oportunidad (presupuesto). Gestionarlas
+// requiere permiso de edición; el importe de la oportunidad se recalcula.
+router.get('/opportunities/:id/items', requirePermission('crm:read'), validateParams(idParams), crm.listItems);
+router.post('/opportunities/:id/items', writeLimiter, requirePermission('crm:update'), validateParams(idParams), validateBody(schemas.opportunityItemCreate), crm.addItem);
+router.patch('/opportunities/:id/items/:itemId', writeLimiter, requirePermission('crm:update'), validateParams(schemas.itemParams), validateBody(schemas.opportunityItemUpdate), crm.updateItem);
+router.delete('/opportunities/:id/items/:itemId', writeLimiter, requirePermission('crm:update'), validateParams(schemas.itemParams), crm.removeItem);
+
+// Forecast de ventas por mes (bruto y ponderado).
+router.get('/forecast', requirePermission('crm:read'), validateQuery(schemas.forecastQuery), crm.getForecast);
+
 // Pipeline (kanban) y gestión de etapas.
 router.get('/pipeline', requirePermission('crm:read'), crm.getPipeline);
 {

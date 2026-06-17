@@ -15,7 +15,7 @@ permisos, trazabilidad), sin su complejidad ni su coste.
 | Conversión lead→oportunidad | ✅ | Transaccional y auditada |
 | Activities (tareas, notas, timeline) | ✅ | Tareas polimórficas, notas, activity log |
 | Custom fields | ✅ | Definiciones por tenant + valores validados (text/number/date/boolean/select) |
-| Products / Price Book | ✅ (básico) | Catálogo por tenant con precio; line items en roadmap |
+| Products / Price Book | ✅ | Catálogo por tenant + líneas de producto en oportunidades (cantidad, precio, descuento, total calculado en BD) |
 | Reports & Dashboards | ✅ (básico) | KPIs de pipeline, win rate, seguimientos; informes configurables en roadmap |
 | Data import | ✅ | CSV (parseo cliente) → validación fila a fila, hasta 500 filas |
 | Roles y perfiles | ✅ | 5 roles con matriz server-side y scoping de comercial |
@@ -24,7 +24,7 @@ permisos, trazabilidad), sin su complejidad ni su coste.
 | API REST | ✅ | Toda la funcionalidad es API-first |
 | Audit trail | ✅ | Append-only con actor, diff, IP |
 | RGPD (exportar/anonimizar) | ✅ | Ventaja frente a CRMs americanos para el mercado europeo |
-| Forecasting | 🔜 | Base lista (probabilidad × importe); vistas por mes en roadmap |
+| Forecasting | ✅ | Forecast por mes de cierre (bruto y ponderado), filtrable por responsable |
 | Email/calendar sync (Activity Capture) | 🔜 | Roadmap; el modelo de actividad ya lo soporta |
 | Cadencias / Sales Engagement | 🔜 | Roadmap |
 | Workflow automation | 🔜 | Roadmap (reglas: "si lead sin tocar 7 días → tarea") |

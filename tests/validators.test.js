@@ -86,3 +86,20 @@ test('productización: esquemas de admin estrictos', () => {
   const lead = schemas.leadCreate.parse({ title: 'L', custom: { tratamiento: 'Ortodoncia' } });
   assert.equal(lead.custom.tratamiento, 'Ortodoncia');
 });
+
+test('líneas de oportunidad: requieren producto o nombre', () => {
+  assert.throws(() => schemas.opportunityItemCreate.parse({ quantity: 2 }));
+  assert.throws(() => schemas.opportunityItemCreate.parse({ name: 'X', quantity: 0 }));
+  assert.throws(() => schemas.opportunityItemCreate.parse({ name: 'X', discount_percent: 150 }));
+  const ok = schemas.opportunityItemCreate.parse({ name: 'Servicio', quantity: 3, unit_price: 100, discount_percent: 10 });
+  assert.equal(ok.quantity, 3);
+  const fromProduct = schemas.opportunityItemCreate.parse({ product_id: '00000000-0000-0000-0000-000000000001' });
+  assert.equal(fromProduct.product_id, '00000000-0000-0000-0000-000000000001');
+});
+
+test('forecast: meses acotados', () => {
+  assert.throws(() => schemas.forecastQuery.parse({ months: 0 }));
+  assert.throws(() => schemas.forecastQuery.parse({ months: 99 }));
+  const ok = schemas.forecastQuery.parse({ months: 12 });
+  assert.equal(ok.months, 12);
+});

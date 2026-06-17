@@ -79,7 +79,7 @@ const opportunities = {
   entityType: 'opportunity',
   table: 'crm_opportunities',
   selectColumns: `id, title, company_id, contact_id, lead_id, stage_id, status,
-    amount, currency, probability, expected_close_date, closed_at, lost_reason,
+    amount, amount_is_derived, currency, probability, expected_close_date, closed_at, lost_reason,
     priority, owner_user_id, main_pain, product_id, source, next_step,
     next_follow_up_at, custom, ${AUDIT_COLS}`,
   columns: ['title', 'company_id', 'contact_id', 'lead_id', 'stage_id', 'amount',

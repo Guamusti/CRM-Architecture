@@ -141,6 +141,35 @@ const opportunityListQuery = z.object({
   company_id: uuid.optional(),
 }).strict();
 
+// Líneas de producto de una oportunidad.
+// Si se indica product_id, name/unit_price pueden tomarse del catálogo.
+const opportunityItemCreate = z.object({
+  product_id: uuid.nullish(),
+  name: shortText(160).optional(),
+  quantity: z.coerce.number().positive().max(1000000).optional(),
+  unit_price: money.optional(),
+  discount_percent: z.coerce.number().min(0).max(100).optional(),
+  position: z.coerce.number().int().min(0).max(1000).optional(),
+}).strict().refine((d) => d.product_id || d.name, {
+  message: 'Indica un producto o un nombre de línea',
+});
+
+const opportunityItemUpdate = z.object({
+  product_id: uuid.nullish(),
+  name: shortText(160).optional(),
+  quantity: z.coerce.number().positive().max(1000000).optional(),
+  unit_price: money.optional(),
+  discount_percent: z.coerce.number().min(0).max(100).optional(),
+  position: z.coerce.number().int().min(0).max(1000).optional(),
+}).strict();
+
+const itemParams = z.object({ id: uuid, itemId: uuid }).strict();
+
+const forecastQuery = z.object({
+  months: z.coerce.number().int().min(1).max(24).optional(),
+  owner_user_id: uuid.optional(),
+}).strict();
+
 // ----------------------------------------------------------------
 // Pipeline stages
 // ----------------------------------------------------------------
@@ -299,6 +328,7 @@ module.exports = {
   contactCreate, contactUpdate, contactListQuery,
   leadCreate, leadUpdate, leadListQuery,
   opportunityCreate, opportunityUpdate, opportunityClose, opportunityListQuery,
+  opportunityItemCreate, opportunityItemUpdate, itemParams, forecastQuery,
   stageCreate, stageUpdate,
   taskCreate, taskUpdate, taskListQuery,
   noteCreate, activityListQuery,

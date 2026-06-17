@@ -580,6 +580,86 @@ function Dashboard({ notify }) {
 }
 
 // ----------------------------------------------------------------
+// Líneas de producto de una oportunidad (presupuesto)
+// ----------------------------------------------------------------
+function OpportunityItems({ opportunityId, products, editable, notify, onTotal }) {
+  const [items, setItems] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [adding, setAdding] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api(`/crm/opportunities/${opportunityId}/items`);
+      setItems(res.data.items); setTotal(res.data.total);
+    } catch (err) { notify(err.message, 'error'); }
+  }, [opportunityId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function addLine(payload) {
+    const res = await api(`/crm/opportunities/${opportunityId}/items`, { method: 'POST', body: payload });
+    notify('Línea añadida');
+    if (onTotal) onTotal(res.data.opportunity_total);
+    await load();
+  }
+
+  async function removeLine(itemId) {
+    try {
+      const res = await api(`/crm/opportunities/${opportunityId}/items/${itemId}`, { method: 'DELETE' });
+      if (onTotal) onTotal(res.data.opportunity_total);
+      await load();
+    } catch (err) { notify(err.message, 'error'); }
+  }
+
+  const itemFields = [
+    { name: 'product_id', label: 'Producto del catálogo (opcional)', type: 'select', options: Object.fromEntries(products.map((p) => [p.id, p.name])) },
+    { name: 'name', label: 'Nombre (si no eliges producto)', max: 160 },
+    { name: 'quantity', label: 'Cantidad', type: 'number' },
+    { name: 'unit_price', label: 'Precio unitario (€)', type: 'number' },
+    { name: 'discount_percent', label: 'Descuento (%)', type: 'number' },
+  ];
+
+  return html`
+    <div class="mb-5">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-semibold">Líneas / presupuesto</div>
+        ${editable && can('update') && html`
+          <button class="text-xs px-2 py-1 rounded-lg bg-indigo-600 text-white" onClick=${() => setAdding(true)}>+ Añadir línea</button>`}
+      </div>
+      ${items === null ? html`<${Spinner} />` : items.length === 0
+        ? html`<div class="text-sm text-slate-400">Sin líneas. El importe es manual.</div>`
+        : html`
+          <table class="w-full text-sm">
+            <thead><tr class="text-left text-xs text-slate-400 border-b">
+              <th class="py-1">Concepto</th><th class="py-1 text-right">Cant.</th>
+              <th class="py-1 text-right">Precio</th><th class="py-1 text-right">Dto.</th>
+              <th class="py-1 text-right">Total</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${items.map((it) => html`
+                <tr key=${it.id} class="border-b last:border-0">
+                  <td class="py-1">${it.name}</td>
+                  <td class="py-1 text-right">${Number(it.quantity)}</td>
+                  <td class="py-1 text-right">${fmtMoney(it.unit_price)}</td>
+                  <td class="py-1 text-right">${Number(it.discount_percent)}%</td>
+                  <td class="py-1 text-right font-medium">${fmtMoney(it.line_total)}</td>
+                  <td class="py-1 text-right">
+                    ${editable && can('update') && html`
+                      <button class="text-red-500 text-xs" onClick=${() => removeLine(it.id)}>✕</button>`}
+                  </td>
+                </tr>`)}
+            </tbody>
+            <tfoot><tr class="border-t-2">
+              <td colSpan="4" class="py-1 text-right font-semibold">Total</td>
+              <td class="py-1 text-right font-bold">${fmtMoney(total)}</td><td></td>
+            </tr></tfoot>
+          </table>`}
+      ${adding && html`
+        <${FormModal} title="Añadir línea" fields=${itemFields}
+          onSave=${addLine} onClose=${() => setAdding(false)} />`}
+    </div>`;
+}
+
+// ----------------------------------------------------------------
 // Kanban del pipeline
 // ----------------------------------------------------------------
 function Pipeline({ notify, users, products, customDefs }) {
@@ -684,6 +764,8 @@ function Pipeline({ notify, users, products, customDefs }) {
             { name: 'expected_close_date', label: 'Cierre previsto', render: fmtDate },
             { name: 'next_follow_up_at', label: 'Próximo seguimiento', render: fmtDateTime },
           ]} />
+          <${OpportunityItems} opportunityId=${selected.id} products=${products} editable=${true}
+            notify=${notify} onTotal=${() => load()} />
           <${NotesAndActivity} entityType="opportunity" entityId=${selected.id} notify=${notify} />
         <//>`}
     </div>`;
@@ -1061,6 +1143,89 @@ function customFieldsAdminView() {
 }
 
 // ----------------------------------------------------------------
+// Forecast de ventas por mes (bruto, ponderado y ganado)
+// ----------------------------------------------------------------
+function monthLabel(ym) {
+  const [y, m] = ym.split('-');
+  return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+}
+
+function Forecast({ notify, users }) {
+  const [data, setData] = useState(null);
+  const [owner, setOwner] = useState('');
+
+  const load = useCallback(() => {
+    api('/crm/forecast', { query: { months: 6, owner_user_id: owner || undefined } })
+      .then((r) => setData(r.data)).catch((e) => notify(e.message, 'error'));
+  }, [owner]);
+  useEffect(() => { load(); }, [load]);
+
+  if (!data) return html`<${Spinner} />`;
+
+  const wonByMonth = Object.fromEntries(data.won_by_month.map((r) => [r.month, r]));
+  const months = [...new Set([...data.open_by_month.map((r) => r.month), ...data.won_by_month.map((r) => r.month)])].sort();
+  const maxVal = Math.max(1, ...data.open_by_month.map((r) => Number(r.open_value)), ...data.won_by_month.map((r) => Number(r.won_value)));
+  const totalOpen = data.open_by_month.reduce((a, r) => a + Number(r.open_value), 0);
+  const totalWeighted = data.open_by_month.reduce((a, r) => a + Number(r.weighted_value), 0);
+
+  return html`
+    <div>
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <h2 class="text-lg font-semibold mr-auto">Forecast de ventas</h2>
+        <select class="border rounded-lg px-2 py-1.5 text-sm" value=${owner} onChange=${(e) => setOwner(e.target.value)}>
+          <option value="">Todos los responsables</option>
+          ${users.map((u) => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}
+        </select>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-400">Pipeline próximos 6 meses</div>
+          <div class="text-xl font-bold">${fmtMoney(totalOpen)}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-400">Forecast ponderado</div>
+          <div class="text-xl font-bold text-indigo-600">${fmtMoney(totalWeighted)}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-400">Sin fecha de cierre</div>
+          <div class="text-xl font-bold">${fmtMoney(data.open_without_date.open_value)}
+            <span class="text-xs text-slate-400">(${data.open_without_date.count})</span></div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="text-sm font-semibold mb-3">Por mes de cierre previsto</div>
+        ${months.length === 0 ? html`<div class="text-sm text-slate-400">No hay oportunidades con fecha de cierre en el periodo.</div>`
+          : html`
+            <div class="space-y-3">
+              ${data.open_by_month.map((r) => html`
+                <div key=${r.month}>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span class="font-medium">${monthLabel(r.month)} <span class="text-slate-400">(${r.count})</span></span>
+                    <span>${fmtMoney(r.open_value)} · <span class="text-indigo-600">pond. ${fmtMoney(r.weighted_value)}</span></span>
+                  </div>
+                  <div class="h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <div class="h-full bg-indigo-200" style=${{ width: `${Number(r.open_value) / maxVal * 100}%` }}>
+                      <div class="h-full bg-indigo-600" style=${{ width: `${Number(r.weighted_value) / Math.max(Number(r.open_value), 1) * 100}%` }}></div>
+                    </div>
+                  </div>
+                  ${wonByMonth[r.month] && html`
+                    <div class="text-xs text-emerald-600 mt-0.5">Ganado: ${fmtMoney(wonByMonth[r.month].won_value)} (${wonByMonth[r.month].count})</div>`}
+                </div>`)}
+            </div>`}
+      </div>
+      ${data.won_by_month.length > 0 && html`
+        <div class="bg-white rounded-xl shadow p-4 mt-4">
+          <div class="text-sm font-semibold mb-2">Ganado por mes (histórico reciente)</div>
+          ${data.won_by_month.map((r) => html`
+            <div key=${r.month} class="flex justify-between text-sm py-1 border-b last:border-0">
+              <span>${monthLabel(r.month)} <span class="text-slate-400">(${r.count})</span></span>
+              <span class="font-medium text-emerald-600">${fmtMoney(r.won_value)}</span>
+            </div>`)}
+        </div>`}
+    </div>`;
+}
+
+// ----------------------------------------------------------------
 // Shell principal
 // ----------------------------------------------------------------
 function App() {
@@ -1101,7 +1266,7 @@ function App() {
   }
 
   const tabs = [
-    ['dashboard', 'Dashboard'], ['pipeline', 'Pipeline'], ['leads', 'Leads'],
+    ['dashboard', 'Dashboard'], ['pipeline', 'Pipeline'], ['forecast', 'Forecast'], ['leads', 'Leads'],
     ['companies', 'Empresas'], ['contacts', 'Contactos'], ['tasks', 'Tareas'],
     ...(can('admin') ? [['admin', 'Administración']] : []),
   ];
@@ -1145,6 +1310,7 @@ function App() {
       <main class="max-w-7xl mx-auto px-4 py-6">
         ${tab === 'dashboard' && html`<${Dashboard} notify=${notify} />`}
         ${tab === 'pipeline' && html`<${Pipeline} notify=${notify} users=${users} products=${products} customDefs=${customDefs} />`}
+        ${tab === 'forecast' && html`<${Forecast} notify=${notify} users=${users} />`}
         ${tab === 'admin' && html`
           <${Admin} notify=${notify} onBrandChange=${onBrandChange}
             productsView=${productsAdminView()} customFieldsView=${customFieldsAdminView()} />`}

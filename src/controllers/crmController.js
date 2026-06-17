@@ -1,6 +1,7 @@
 'use strict';
 const services = require('../services/crmServices');
 const extra = require('../services/crmExtraServices');
+const items = require('../services/opportunityItemsService');
 const db = require('../config/db');
 const { parsePagination, paginatedResponse } = require('../utils/pagination');
 
@@ -104,8 +105,40 @@ async function anonymizeContact(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// --- Líneas de producto de oportunidades ---
+async function listItems(req, res, next) {
+  try {
+    res.json({ data: await items.listItems(req, req.params.id) });
+  } catch (err) { next(err); }
+}
+
+async function addItem(req, res, next) {
+  try {
+    res.status(201).json({ data: await items.addItem(req, req.params.id, req.body) });
+  } catch (err) { next(err); }
+}
+
+async function updateItem(req, res, next) {
+  try {
+    res.json({ data: await items.updateItem(req, req.params.id, req.params.itemId, req.body) });
+  } catch (err) { next(err); }
+}
+
+async function removeItem(req, res, next) {
+  try {
+    res.json({ data: await items.removeItem(req, req.params.id, req.params.itemId) });
+  } catch (err) { next(err); }
+}
+
+async function getForecast(req, res, next) {
+  try {
+    res.json({ data: await items.getForecast(req, req.query) });
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   closeOpportunity, getPipeline, getDashboard, listActivities, listUsers,
   convertLead, listTags, createTag, deleteTag, assignTag, unassignTag,
   exportContact, anonymizeContact,
+  listItems, addItem, updateItem, removeItem, getForecast,
 };
