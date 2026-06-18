@@ -20,6 +20,18 @@ function setSession(s) {
   if (s) sessionStorage.setItem('crm_session', JSON.stringify(s));
   else sessionStorage.removeItem('crm_session');
 }
+// Normaliza la respuesta de auth a una sesión. Acepta tanto el formato
+// clásico ({ token }) como el nuevo ({ access_token, refresh_token }).
+// Solo se persisten tokens de sesión (sessionStorage), nunca en
+// localStorage; jamás secret/otpauth/recovery/challenge.
+function sessionFromAuth(data) {
+  return {
+    token: data.access_token || data.token,
+    refresh_token: data.refresh_token || null,
+    user: data.user,
+    organization: data.organization,
+  };
+}
 
 async function api(path, { method = 'GET', body, query } = {}) {
   const session = getSession();
@@ -39,7 +51,12 @@ async function api(path, { method = 'GET', body, query } = {}) {
   if (res.status === 401 && session) { setSession(null); window.location.reload(); return; }
   if (res.status === 204) return null;
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error?.message || `Error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(json.error?.message || `Error ${res.status}`);
+    err.status = res.status;
+    err.code = json.error?.code;
+    throw err;
+  }
   return json;
 }
 
@@ -1163,7 +1180,8 @@ function Dashboard({ notify, brandColor, goto }) {
         </div>
       </div>
 
-      <div class="grid md:grid-cols-2 gap-4">
+      <div class="grid lg:grid-cols-3 gap-4">
+        <${ForecastStrip} brandColor=${brandColor} goto=${goto} />
         <div class="bg-white rounded-xl shadow p-4">
           <div class="text-sm font-semibold mb-2">Leads por estado</div>
           ${data.leads_by_status.length === 0 ? html`<div class="text-sm text-slate-400">Sin leads.</div>`
@@ -1323,70 +1341,116 @@ function Pipeline({ notify, users, products, customDefs, brandColor }) {
 // Forecast de ventas
 // ================================================================
 function monthLabel(ym) {
-  const [y, m] = ym.split('-');
+  if (!ym) return '—';
+  const [y, m] = String(ym).split('-');
   return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
 }
-function Forecast({ notify, users, brandColor }) {
+function currentMonthISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+// Lectura defensiva de los importes de un mes (los nombres de campo
+// exactos los define el backend; se aceptan variantes habituales).
+const fcMonth = (m) => m.month || m.period || m.label || '';
+const fcOpen = (m) => Number(m.open_value ?? m.open ?? m.open_amount ?? 0);
+const fcWeighted = (m) => Number(m.weighted_value ?? m.weighted ?? m.weighted_amount ?? 0);
+const fcWon = (m) => Number(m.won_value ?? m.won ?? m.won_amount ?? 0);
+const fcLost = (m) => Number(m.lost_value ?? m.lost ?? m.lost_amount ?? 0);
+
+function useForecast(months) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [owner, setOwner] = useState('');
   const load = useCallback(() => {
     setError(null);
-    api('/crm/forecast', { query: { months: 6, owner_user_id: owner || undefined } })
-      .then((r) => setData(r.data)).catch((e) => setError(e.message));
-  }, [owner]);
+    api('/crm/forecast', { query: { from: currentMonthISO(), months } })
+      .then((r) => setData(r.data)).catch((e) => { setError(e.message); setData(null); });
+  }, [months]);
   useEffect(() => { load(); }, [load]);
+  return { data, error, reload: load };
+}
 
-  if (error) return html`<${ErrorState} message=${error} onRetry=${load} />`;
+function Forecast({ notify, brandColor }) {
+  const { data, error, reload } = useForecast(6);
+  if (error) return html`<${ErrorState} message=${error} onRetry=${reload} />`;
   if (!data) return html`<${Spinner} />`;
 
-  const wonByMonth = Object.fromEntries(data.won_by_month.map((r) => [r.month, r]));
-  const maxVal = Math.max(1, ...data.open_by_month.map((r) => Number(r.open_value)));
-  const totalOpen = data.open_by_month.reduce((a, r) => a + Number(r.open_value), 0);
-  const totalWeighted = data.open_by_month.reduce((a, r) => a + Number(r.weighted_value), 0);
+  const months = data.months || [];
+  const maxVal = Math.max(1, ...months.map((m) => Math.max(fcOpen(m), fcWon(m), fcLost(m))));
+  const totalOpen = months.reduce((a, m) => a + fcOpen(m), 0);
+  const totalWeighted = months.reduce((a, m) => a + fcWeighted(m), 0);
+  const totalWon = months.reduce((a, m) => a + fcWon(m), 0);
+  const totalLost = months.reduce((a, m) => a + fcLost(m), 0);
 
   return html`
     <div>
       <div class="flex flex-wrap items-center gap-2 mb-4">
         <h2 class="text-lg font-semibold mr-auto">Forecast de ventas</h2>
-        <select class="border rounded-lg px-2 py-1.5 text-sm" value=${owner} onChange=${(e) => setOwner(e.target.value)}>
-          <option value="">Todos los responsables</option>
-          ${users.map((u) => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}
-        </select>
+        <span class="text-sm text-slate-400">Próximos ${months.length} meses</span>
       </div>
-      <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-        <${KpiCard} label="Pipeline próximos 6 meses" value=${fmtMoney(totalOpen)} />
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <${KpiCard} label="Pipeline abierto" value=${fmtMoney(totalOpen)} />
         <${KpiCard} label="Forecast ponderado" value=${fmtMoney(totalWeighted)} accent=${true} />
-        <${KpiCard} label="Sin fecha de cierre" value=${fmtMoney(data.open_without_date.open_value)} sub=${`${data.open_without_date.count} oportunidades`} />
+        <${KpiCard} label="Ganado" value=${fmtMoney(totalWon)} />
+        <${KpiCard} label="Perdido" value=${fmtMoney(totalLost)} alert=${totalLost > 0} />
       </div>
       <div class="bg-white rounded-xl shadow p-4">
-        <div class="text-sm font-semibold mb-3">Por mes de cierre previsto</div>
-        ${data.open_by_month.length === 0 ? html`<${EmptyState} title="Sin previsión" hint="No hay oportunidades con fecha de cierre en el periodo." />`
-          : html`<div class="space-y-3">
-              ${data.open_by_month.map((r) => html`
-                <div key=${r.month}>
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold">Por mes</div>
+          <div class="flex items-center gap-3 text-xs text-slate-500">
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-indigo-200"></span>Abierto</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm" style=${{ backgroundColor: brandColor }}></span>Ponderado</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-emerald-500"></span>Ganado</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-red-400"></span>Perdido</span>
+          </div>
+        </div>
+        ${months.length === 0 ? html`<${EmptyState} title="Sin previsión" hint="No hay oportunidades con fecha de cierre en el periodo." />`
+          : html`<div class="space-y-4">
+              ${months.map((m) => html`
+                <div key=${fcMonth(m)}>
                   <div class="flex justify-between text-sm mb-1">
-                    <span class="font-medium">${monthLabel(r.month)} <span class="text-slate-400">(${r.count})</span></span>
-                    <span>${fmtMoney(r.open_value)} · <span class="text-indigo-600">pond. ${fmtMoney(r.weighted_value)}</span></span>
+                    <span class="font-medium">${monthLabel(fcMonth(m))}</span>
+                    <span>${fmtMoney(fcOpen(m))} · <span class="text-indigo-600">pond. ${fmtMoney(fcWeighted(m))}</span></span>
                   </div>
-                  <div class="h-3 bg-slate-100 rounded-full overflow-hidden">
-                    <div class="h-full bg-indigo-200" style=${{ width: `${Number(r.open_value) / maxVal * 100}%` }}>
-                      <div class="h-full" style=${{ width: `${Number(r.weighted_value) / Math.max(Number(r.open_value), 1) * 100}%`, backgroundColor: brandColor }}></div>
+                  <div class="h-3 bg-slate-100 rounded-full overflow-hidden mb-1">
+                    <div class="h-full bg-indigo-200" style=${{ width: `${fcOpen(m) / maxVal * 100}%` }}>
+                      <div class="h-full" style=${{ width: `${fcWeighted(m) / Math.max(fcOpen(m), 1) * 100}%`, backgroundColor: brandColor }}></div>
                     </div>
                   </div>
-                  ${wonByMonth[r.month] && html`<div class="text-xs text-emerald-600 mt-0.5">Ganado: ${fmtMoney(wonByMonth[r.month].won_value)} (${wonByMonth[r.month].count})</div>`}
+                  <div class="flex gap-4 text-xs">
+                    ${fcWon(m) > 0 && html`<span class="text-emerald-600">Ganado: ${fmtMoney(fcWon(m))}</span>`}
+                    ${fcLost(m) > 0 && html`<span class="text-red-500">Perdido: ${fmtMoney(fcLost(m))}</span>`}
+                  </div>
                 </div>`)}
             </div>`}
       </div>
-      ${data.won_by_month.length > 0 && html`
-        <div class="bg-white rounded-xl shadow p-4 mt-4">
-          <div class="text-sm font-semibold mb-2">Ganado por mes (histórico reciente)</div>
-          ${data.won_by_month.map((r) => html`
-            <div key=${r.month} class="flex justify-between text-sm py-1 border-b last:border-0">
-              <span>${monthLabel(r.month)} <span class="text-slate-400">(${r.count})</span></span>
-              <span class="font-medium text-emerald-600">${fmtMoney(r.won_value)}</span>
-            </div>`)}
-        </div>`}
+    </div>`;
+}
+
+// Tira compacta de forecast para el Dashboard
+function ForecastStrip({ brandColor, goto }) {
+  const { data, error } = useForecast(3);
+  if (error || !data) return null;
+  const months = (data.months || []).slice(0, 3);
+  if (!months.length) return null;
+  const maxVal = Math.max(1, ...months.map((m) => fcOpen(m)));
+  return html`
+    <div class="bg-white rounded-xl shadow p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-sm font-semibold">Forecast (3 meses)</div>
+        <button class="text-xs text-indigo-600 hover:underline" onClick=${() => goto('forecast')}>Ver forecast →</button>
+      </div>
+      ${months.map((m) => html`
+        <div key=${fcMonth(m)} class="mb-2.5">
+          <div class="flex justify-between text-sm mb-1">
+            <span class="font-medium">${monthLabel(fcMonth(m))}</span>
+            <span class="text-indigo-600">${fmtMoney(fcWeighted(m))}</span>
+          </div>
+          <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+            <div class="h-full bg-indigo-200" style=${{ width: `${fcOpen(m) / maxVal * 100}%` }}>
+              <div class="h-full" style=${{ width: `${fcWeighted(m) / Math.max(fcOpen(m), 1) * 100}%`, backgroundColor: brandColor }}></div>
+            </div>
+          </div>
+        </div>`)}
     </div>`;
 }
 
@@ -1490,23 +1554,755 @@ function Settings({ notify, productsView, customFieldsView, onBrandChange, users
 }
 
 // ================================================================
-// Pantalla "pendiente de backend"
+// Facturación / Plan (solo lectura)
 // ================================================================
-function ComingSoon({ title, icon, description, bullets }) {
+function planLabel(plan) {
+  if (!plan) return '—';
+  if (typeof plan === 'string') return plan;
+  return plan.name || plan.code || plan.id || '—';
+}
+function planStatus(plan, summary) {
+  return (plan && (plan.status || plan.state)) || summary.status || null;
+}
+const PLAN_STATUS_LABEL = { active: 'Activo', trialing: 'En prueba', trial: 'En prueba', past_due: 'Pago pendiente', canceled: 'Cancelado', cancelled: 'Cancelado' };
+const PLANS = [['starter', 'Starter'], ['professional', 'Professional'], ['business', 'Business'], ['enterprise', 'Enterprise']];
+// Una integración externa "no configurada" no es un error: es un estado de
+// producto. Lo detectamos por código/estado y lo mostramos con UX profesional.
+function isNotConfigured(err) {
+  if (!err) return false;
+  if (err.status === 501) return true;
+  const code = (err.code || '').toUpperCase();
+  return code.includes('NOT_CONFIGURED') || code === 'STRIPE_NOT_CONFIGURED' || code === 'NOT_IMPLEMENTED';
+}
+
+function Billing({ notify, brandColor }) {
+  const [summary, setSummary] = useState(null);
+  const [invoices, setInvoices] = useState(null);
+  const [error, setError] = useState(null);
+  const [notConfigured, setNotConfigured] = useState(false);
+  const [busyPlan, setBusyPlan] = useState(null);
+
+  const load = useCallback(() => {
+    setError(null);
+    api('/crm/billing/summary')
+      .then((r) => setSummary(r.data))
+      .catch((e) => { if (isNotConfigured(e)) { setNotConfigured(true); setSummary({}); } else setError(e.message); });
+    api('/crm/billing/invoices')
+      .then((r) => setInvoices(r.data))
+      .catch((e) => { if (isNotConfigured(e)) { setNotConfigured(true); setInvoices([]); } else setInvoices([]); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function checkout(plan) {
+    setBusyPlan(plan);
+    try {
+      const res = await api('/crm/billing/checkout', { method: 'POST', body: { plan } });
+      const url = res?.data?.checkout_url || res?.data?.url;
+      if (url) window.location.assign(url);
+      else notify('No se recibió URL de pago', 'error');
+    } catch (e) {
+      if (isNotConfigured(e)) { setNotConfigured(true); notify('La facturación online requiere configuración', 'error'); }
+      else notify(e.message, 'error');
+    } finally { setBusyPlan(null); }
+  }
+  async function portal() {
+    try {
+      const res = await api('/crm/billing/portal', { method: 'POST' });
+      const url = res?.data?.portal_url || res?.data?.url;
+      if (url) window.location.assign(url); else notify('No se recibió URL del portal', 'error');
+    } catch (e) {
+      if (isNotConfigured(e)) { setNotConfigured(true); notify('La facturación online requiere configuración', 'error'); }
+      else notify(e.message, 'error');
+    }
+  }
+
+  if (error) return html`
+    <div><h2 class="text-lg font-semibold mb-4">Facturación y plan</h2><${ErrorState} message=${error} onRetry=${load} /></div>`;
+  if (!summary) return html`<${Spinner} />`;
+
+  const plan = summary.plan || {};
+  const limits = summary.limits || {};
+  const usage = summary.usage || {};
+  const status = planStatus(plan, summary);
+  const trialEnd = (plan && (plan.trial_ends_at || plan.trial_end)) || summary.trial_ends_at;
+  const keys = Object.keys(limits);
+  const currentPlanCode = (typeof plan === 'string' ? plan : (plan.code || plan.id || '')).toLowerCase();
+
+  return html`
+    <div class="space-y-6">
+      <h2 class="text-lg font-semibold">Facturación y plan</h2>
+
+      <div class="grid md:grid-cols-3 gap-3">
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-400">Plan actual</div>
+          <div class="text-2xl font-bold" style=${{ color: brandColor }}>${planLabel(plan)}</div>
+          ${plan && plan.price != null && html`<div class="text-xs text-slate-400 mt-0.5">${fmtMoney(plan.price)}${plan.interval ? ` / ${plan.interval}` : ''}</div>`}
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-400">Estado</div>
+          <div class="text-lg font-semibold mt-1"><${Badge} value=${status} map=${PLAN_STATUS_LABEL} /></div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-xs text-slate-400">Fin de prueba</div>
+          <div class="text-lg font-semibold">${trialEnd ? fmtDate(trialEnd) : '—'}</div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="text-sm font-semibold mb-3">Uso vs. límites</div>
+        ${keys.length === 0 ? html`<div class="text-sm text-slate-400">El plan no define límites de uso.</div>`
+          : keys.map((k) => {
+              const limit = limits[k];
+              const used = Number(usage[k] ?? 0);
+              const unlimited = limit === null || limit === undefined || limit < 0;
+              const pct = unlimited ? 0 : Math.min(100, Math.round(used / Math.max(limit, 1) * 100));
+              const danger = !unlimited && pct >= 90;
+              return html`
+                <div key=${k} class="mb-3">
+                  <div class="flex justify-between text-sm mb-1">
+                    <span class="font-medium capitalize">${k.replace(/_/g, ' ')}</span>
+                    <span class=${danger ? 'text-red-600' : 'text-slate-500'}>${fmtNum(used)} / ${unlimited ? '∞' : fmtNum(limit)}</span>
+                  </div>
+                  <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div class="h-full rounded-full" style=${{ width: `${unlimited ? 4 : pct}%`, backgroundColor: danger ? '#dc2626' : brandColor }}></div>
+                  </div>
+                </div>`;
+            })}
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold">Suscripción y pagos</div>
+          ${!notConfigured && html`<button class="text-sm px-3 py-1.5 rounded-lg border" onClick=${portal}>Portal de pagos</button>`}
+        </div>
+        ${notConfigured ? html`
+          <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3 text-sm flex items-start gap-2">
+            <${Icon} name="billing" className="w-4 h-4 mt-0.5" />
+            <div>La facturación online <b>requiere configuración</b> (pasarela de pago Stripe). Cuando el administrador la configure en el servidor, podrás cambiar de plan y descargar facturas desde aquí.</div>
+          </div>`
+        : html`
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            ${PLANS.map(([code, label]) => html`
+              <button key=${code} disabled=${busyPlan === code || code === currentPlanCode}
+                class="border rounded-lg px-3 py-2 text-sm ${code === currentPlanCode ? 'bg-slate-100 text-slate-400 cursor-default' : 'hover:bg-slate-50'} disabled:opacity-60"
+                onClick=${() => checkout(code)}>
+                ${busyPlan === code ? '…' : code === currentPlanCode ? `${label} (actual)` : label}
+              </button>`)}
+          </div>`}
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="text-sm font-semibold mb-3">Facturas</div>
+        ${invoices === null ? html`<${Spinner} />`
+          : invoices.length === 0 ? html`<div class="text-sm text-slate-400">No hay facturas todavía.</div>`
+          : html`
+            <table class="w-full text-sm">
+              <thead><tr class="text-left text-xs text-slate-400 border-b">
+                <th class="py-1.5">Fecha</th><th class="py-1.5">Importe</th><th class="py-1.5">Estado</th><th class="py-1.5"></th>
+              </tr></thead>
+              <tbody>
+                ${invoices.map((inv) => html`
+                  <tr key=${inv.id} class="border-b last:border-0">
+                    <td class="py-1.5">${fmtDate(inv.date || inv.created_at)}</td>
+                    <td class="py-1.5">${fmtMoney(inv.amount ?? inv.total)}</td>
+                    <td class="py-1.5">${inv.status || '—'}</td>
+                    <td class="py-1.5 text-right">${(inv.pdf_url || inv.url) && html`<a class="text-indigo-600 text-xs" href=${inv.pdf_url || inv.url} target="_blank" rel="noopener noreferrer">PDF</a>`}</td>
+                  </tr>`)}
+              </tbody>
+            </table>`}
+      </div>
+    </div>`;
+}
+
+// ================================================================
+// Automatizaciones (regla stale_lead_task)
+// ================================================================
+function Automations({ notify }) {
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState(null);
+  const [planLimit, setPlanLimit] = useState(null); // mensaje 402
+  const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [runsFor, setRunsFor] = useState(null); // automatización cuyo historial se muestra
+
+  const load = useCallback(() => {
+    setError(null);
+    api('/crm/automations').then((r) => setItems(r.data)).catch((e) => {
+      if (e.status === 402) { setPlanLimit(e.message); setItems([]); }
+      else { setError(e.message); setItems(null); }
+    });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const fields = [
+    { name: 'name', label: 'Nombre de la regla', required: true, max: 120 },
+    { name: 'stale_days', label: 'Días sin actividad del lead', type: 'number', required: true },
+    { name: 'task_title', label: 'Título de la tarea a crear', required: true, max: 200 },
+    { name: 'due_in_days', label: 'Vencimiento de la tarea (días)', type: 'number', required: true },
+    { name: 'is_active', label: 'Activa', type: 'checkbox' },
+  ];
+  function toForm(a) {
+    if (!a || !a.id) return null;
+    return { name: a.name, is_active: a.is_active, stale_days: a.config?.stale_days,
+      task_title: a.config?.task_title, due_in_days: a.config?.due_in_days };
+  }
+  function toPayload(v) {
+    return {
+      name: v.name, rule_type: 'stale_lead_task', is_active: v.is_active !== false,
+      config: { stale_days: Number(v.stale_days), task_title: v.task_title, due_in_days: Number(v.due_in_days) },
+    };
+  }
+
+  async function save(v) {
+    const payload = toPayload(v);
+    try {
+      if (editing?.id) { await api(`/crm/automations/${editing.id}`, { method: 'PATCH', body: payload }); notify('Automatización actualizada'); }
+      else { await api('/crm/automations', { method: 'POST', body: payload }); notify('Automatización creada'); }
+      load();
+    } catch (e) {
+      if (e.status === 402) { notify(`${e.message} (límite del plan)`, 'error'); throw e; }
+      throw e;
+    }
+  }
+
+  async function toggleActive(a) {
+    try { await api(`/crm/automations/${a.id}`, { method: 'PATCH', body: { is_active: !a.is_active } }); load(); }
+    catch (e) { notify(e.message, 'error'); }
+  }
+
+  async function runNow() {
+    setRunning(true);
+    try { const r = await api('/crm/automations/run', { method: 'POST' });
+      const created = r?.data?.created_tasks ?? r?.data?.created ?? null;
+      notify(created != null ? `Ejecutado: ${created} tareas creadas` : 'Automatizaciones ejecutadas');
+      load();
+    } catch (e) {
+      if (e.status === 402) notify(`${e.message} (límite del plan)`, 'error');
+      else notify(e.message, 'error');
+    } finally { setRunning(false); }
+  }
+
   return html`
     <div>
-      <div class="flex items-center gap-2 mb-1"><h2 class="text-lg font-semibold">${title}</h2>
-        <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Pendiente de backend</span></div>
-      <div class="text-sm text-slate-400 mb-5">${description}</div>
-      <div class="bg-white rounded-xl shadow p-6 max-w-2xl">
-        <div class="flex items-center gap-3 mb-4">
-          <div class="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center"><${Icon} name=${icon} className="w-6 h-6" /></div>
-          <div class="text-sm text-slate-500">Esta pantalla es una previsualización funcional. La lógica se activará cuando el equipo de backend exponga los endpoints correspondientes (ver <code class="bg-slate-100 px-1 rounded">docs/CRM_MODULES.md</code>).</div>
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div class="mr-auto">
+          <h2 class="text-lg font-semibold">Automatizaciones</h2>
+          <div class="text-sm text-slate-400">Crea tareas automáticamente para leads sin actividad.</div>
         </div>
-        <ul class="space-y-2">
-          ${bullets.map((b, i) => html`<li key=${i} class="flex items-start gap-2 text-sm text-slate-600"><span class="text-indigo-400 mt-0.5"><${Icon} name="check" className="w-4 h-4" /></span>${b}</li>`)}
-        </ul>
-        <button disabled class="mt-5 px-4 py-2 rounded-lg bg-slate-100 text-slate-400 text-sm cursor-not-allowed">Disponible próximamente</button>
+        ${can('admin') && html`<button class="border rounded-lg px-3 py-1.5 text-sm inline-flex items-center gap-1 disabled:opacity-50" disabled=${running} onClick=${runNow}>
+          <${Icon} name="bolt" className="w-4 h-4" /> ${running ? 'Ejecutando…' : 'Ejecutar ahora'}</button>`}
+        ${can('admin') && html`<button class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm inline-flex items-center gap-1" onClick=${() => setEditing({})}>
+          <${Icon} name="plus" className="w-4 h-4" /> Nueva regla</button>`}
+      </div>
+
+      ${planLimit && html`
+        <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 mb-4 text-sm flex items-center gap-2">
+          <${Icon} name="billing" className="w-4 h-4" />
+          <span>${planLimit}. Mejora tu plan para usar automatizaciones.</span>
+        </div>`}
+
+      ${error ? html`<${ErrorState} message=${error} onRetry=${load} />`
+        : items === null ? html`<${TableSkeleton} cols=4 />`
+        : items.length === 0 ? html`
+          <${EmptyState} icon="bolt" title="Sin automatizaciones"
+            hint=${planLimit ? 'Disponible al mejorar el plan.' : 'Crea una regla para generar tareas de seguimiento automáticamente.'}
+            action=${can('admin') && !planLimit ? html`<button class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm" onClick=${() => setEditing({})}>+ Nueva regla</button>` : null} />`
+        : html`
+          <div class="bg-white rounded-xl shadow overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead><tr class="text-left text-xs text-slate-400 border-b bg-slate-50/50">
+                <th class="px-4 py-2.5 font-medium">Regla</th>
+                <th class="px-4 py-2.5 font-medium">Condición</th>
+                <th class="px-4 py-2.5 font-medium">Acción</th>
+                <th class="px-4 py-2.5 font-medium">Estado</th>
+                <th class="px-4 py-2.5"></th>
+              </tr></thead>
+              <tbody>
+                ${items.map((a) => html`
+                  <tr key=${a.id} class="border-b last:border-0">
+                    <td class="px-4 py-2.5 font-medium text-slate-700">${a.name}</td>
+                    <td class="px-4 py-2.5 text-slate-500">Lead sin actividad ≥ ${a.config?.stale_days ?? '—'} días</td>
+                    <td class="px-4 py-2.5 text-slate-500">Crear tarea «${a.config?.task_title ?? '—'}» (vence en ${a.config?.due_in_days ?? '—'} d)</td>
+                    <td class="px-4 py-2.5">
+                      <button disabled=${!can('admin')} onClick=${() => toggleActive(a)}
+                        class="px-2 py-0.5 rounded-full text-xs font-medium ${a.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}">
+                        ${a.is_active ? 'Activa' : 'Pausada'}</button>
+                    </td>
+                    <td class="px-4 py-2.5 text-right whitespace-nowrap">
+                      <button class="text-xs border rounded px-2 py-1 mr-1" onClick=${() => setRunsFor(a)}>Historial</button>
+                      ${can('admin') && html`<button class="text-xs border rounded px-2 py-1 mr-1" onClick=${() => setEditing(a)}>Editar</button>`}
+                      ${can('admin') && html`<button class="text-xs border border-red-200 text-red-600 rounded px-2 py-1"
+                        onClick=${() => setConfirm({ title: 'Eliminar automatización', message: `¿Eliminar "${a.name}"?`, danger: true, confirmLabel: 'Eliminar',
+                          onConfirm: async () => { await api(`/crm/automations/${a.id}`, { method: 'DELETE' }); notify('Automatización eliminada'); load(); } })}>Eliminar</button>`}
+                    </td>
+                  </tr>`)}
+              </tbody>
+            </table>
+          </div>`}
+
+      ${editing !== null && html`
+        <${FormModal} title=${editing.id ? 'Editar automatización' : 'Nueva automatización'}
+          fields=${fields} initial=${toForm(editing)} onSave=${save} onClose=${() => setEditing(null)} />`}
+      ${runsFor && html`<${AutomationRuns} automation=${runsFor} notify=${notify} onClose=${() => setRunsFor(null)} />`}
+      ${confirm && html`<${ConfirmDialog} ...${confirm} onClose=${() => setConfirm(null)} />`}
+    </div>`;
+}
+
+// Historial de ejecuciones de una automatización
+function AutomationRuns({ automation, notify, onClose }) {
+  const [runs, setRuns] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    api(`/crm/automations/${automation.id}/runs`, { query: { page_size: 50 } })
+      .then((r) => setRuns(r.data)).catch((e) => setError(e.message));
+  }, [automation.id]);
+  return html`
+    <${ModalShell} onClose=${onClose} size="max-w-xl">
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-lg font-semibold">Historial · ${automation.name}</div>
+          <button class="text-slate-400 hover:text-slate-700" onClick=${onClose}><${Icon} name="x" className="w-5 h-5" /></button>
+        </div>
+        ${error ? html`<${ErrorState} message=${error} />`
+          : runs === null ? html`<${Spinner} />`
+          : runs.length === 0 ? html`<${EmptyState} icon="clock" title="Sin ejecuciones" hint="Esta regla aún no se ha ejecutado." />`
+          : html`
+            <ol class="relative border-l border-slate-200 ml-2 space-y-3">
+              ${runs.map((r) => html`
+                <li key=${r.id || r.created_at} class="ml-4">
+                  <span class="absolute -left-1.5 mt-1 w-3 h-3 rounded-full ${r.status === 'error' || r.error ? 'bg-red-400' : 'bg-emerald-400'} border-2 border-white"></span>
+                  <div class="text-sm text-slate-700">${r.created_tasks ?? r.tasks_created ?? 0} tareas creadas${(r.status && r.status !== 'ok') ? ` · ${r.status}` : ''}</div>
+                  <div class="text-xs text-slate-400">${fmtDateTime(r.created_at || r.run_at)}</div>
+                  ${(r.error || r.message) && html`<div class="text-xs text-red-500">${r.error || r.message}</div>`}
+                </li>`)}
+            </ol>`}
+      </div>
+    <//>`;
+}
+
+// ================================================================
+// Seguridad de la cuenta — MFA (TOTP)
+// ================================================================
+function MfaSettings({ notify, onMfaChange }) {
+  // Flujo de activación: idle -> password -> setup (secret/otpauth) -> verify -> recovery (una vez)
+  const [status, setStatus] = useState(null);  // { enabled }
+  const [statusError, setStatusError] = useState(null);
+  const [step, setStep] = useState('idle');
+  const [password, setPassword] = useState('');
+  const [setupData, setSetupData] = useState(null);   // { secret, otpauth_url } solo en memoria
+  const [code, setCode] = useState('');
+  const [recovery, setRecovery] = useState(null);     // mostrado una sola vez
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [disabling, setDisabling] = useState(false);
+
+  const loadStatus = useCallback(() => {
+    setStatusError(null);
+    api('/auth/mfa/status').then((r) => setStatus(r.data)).catch((e) => setStatusError(e.message));
+  }, []);
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  const enabled = !!(status && (status.enabled ?? status.mfa_enabled));
+
+  async function copy(text, label) {
+    try { await navigator.clipboard.writeText(text); notify(`${label} copiado`); }
+    catch { notify('No se pudo copiar; selecciónalo manualmente', 'error'); }
+  }
+
+  async function startSetup(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const res = await api('/auth/mfa/setup', { method: 'POST', body: { current_password: password } });
+      setSetupData(res.data); setPassword(''); setStep('setup');
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function verifySetup(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const res = await api('/auth/mfa/verify', { method: 'POST', body: { code: code.trim() } });
+      setSetupData(null); setCode('');
+      const codes = res?.data?.recovery_codes;
+      onMfaChange(true);
+      notify('Verificación en dos pasos activada');
+      loadStatus();
+      if (Array.isArray(codes) && codes.length) { setRecovery(codes); setStep('recovery'); }
+      else { setStep('idle'); }
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  function finishSetup() { setRecovery(null); setStep('idle'); loadStatus(); }
+
+  async function disable(v) {
+    await api('/auth/mfa/disable', { method: 'POST', body: v });
+    onMfaChange(false); setDisabling(false); notify('Verificación en dos pasos desactivada'); loadStatus();
+  }
+
+  if (statusError) return html`
+    <div class="max-w-2xl"><h2 class="text-lg font-semibold mb-4">Seguridad de la cuenta</h2>
+      <${ErrorState} message=${statusError} onRetry=${loadStatus} /></div>`;
+  if (!status) return html`<${Spinner} />`;
+
+  return html`
+    <div class="max-w-2xl space-y-4">
+      <div>
+        <h2 class="text-lg font-semibold mb-1">Seguridad de la cuenta</h2>
+        <div class="text-sm text-slate-400">Protege tu acceso con verificación en dos pasos (TOTP).</div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl ${enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-400'} flex items-center justify-center"><${Icon} name="shield" className="w-5 h-5" /></div>
+            <div>
+              <div class="font-medium">Verificación en dos pasos</div>
+              <div class="text-sm ${enabled ? 'text-emerald-600' : 'text-slate-400'}">${enabled ? 'Activada' : 'Desactivada'}</div>
+            </div>
+          </div>
+          ${enabled
+            ? html`<button class="text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600" onClick=${() => setDisabling(true)}>Desactivar</button>`
+            : step === 'idle' && html`<button class="text-sm px-3 py-1.5 rounded-lg bg-indigo-600 text-white" onClick=${() => { setStep('password'); setError(null); }}>Activar</button>`}
+        </div>
+
+        ${error && html`<div class="bg-red-50 text-red-700 text-sm rounded-lg p-2 mt-4">${error}</div>`}
+
+        ${step === 'password' && html`
+          <form onSubmit=${startSetup} class="mt-4 border-t pt-4 space-y-3">
+            <div class="text-sm text-slate-600">Confirma tu contraseña para empezar.</div>
+            <input class="w-full border rounded-lg px-3 py-2" type="password" placeholder="Contraseña actual" required autoFocus
+              value=${password} onInput=${(e) => setPassword(e.target.value)} />
+            <div class="flex gap-2">
+              <button disabled=${busy} class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm disabled:opacity-50">${busy ? 'Un momento…' : 'Continuar'}</button>
+              <button type="button" class="px-4 py-2 rounded-lg border text-sm" onClick=${() => { setStep('idle'); setPassword(''); setError(null); }}>Cancelar</button>
+            </div>
+          </form>`}
+
+        ${step === 'setup' && setupData && html`
+          <form onSubmit=${verifySetup} class="mt-4 border-t pt-4 space-y-3">
+            <div class="text-sm text-slate-600">Añade esta cuenta a tu app de autenticación (Google Authenticator, Authy, 1Password…).</div>
+            <div class="bg-slate-50 rounded-lg p-3 space-y-2">
+              <div>
+                <div class="text-xs text-slate-400">Clave secreta (entrada manual)</div>
+                <div class="flex items-center gap-2">
+                  <code class="text-sm font-mono break-all">${setupData.secret}</code>
+                  <button type="button" class="text-xs text-indigo-600 shrink-0" onClick=${() => copy(setupData.secret, 'Secreto')}>Copiar</button>
+                </div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-400">URL de configuración (otpauth)</div>
+                <div class="flex items-center gap-2">
+                  <code class="text-xs font-mono break-all text-slate-500">${setupData.otpauth_url}</code>
+                  <button type="button" class="text-xs text-indigo-600 shrink-0" onClick=${() => copy(setupData.otpauth_url, 'Enlace')}>Copiar</button>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="text-xs font-medium text-slate-600 mb-1">Introduce el código de 6 dígitos</div>
+              <input class="border rounded-lg px-3 py-2 text-center tracking-widest w-40" placeholder="000000" inputMode="numeric" maxLength="6" required
+                value=${code} onInput=${(e) => setCode(e.target.value)} />
+            </div>
+            <div class="flex gap-2">
+              <button disabled=${busy} class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm disabled:opacity-50">${busy ? 'Verificando…' : 'Activar'}</button>
+              <button type="button" class="px-4 py-2 rounded-lg border text-sm" onClick=${() => { setStep('idle'); setSetupData(null); setCode(''); setError(null); }}>Cancelar</button>
+            </div>
+          </form>`}
+
+        ${step === 'recovery' && recovery && html`
+          <div class="mt-4 border-t pt-4 space-y-3">
+            <div class="text-sm font-medium text-slate-700">Guarda tus códigos de recuperación</div>
+            <div class="text-xs text-slate-500">Se muestran <b>una sola vez</b>. Cada código sirve para entrar si pierdes el acceso a tu app. No se almacenan en este navegador.</div>
+            <div class="bg-slate-50 rounded-lg p-3 grid grid-cols-2 gap-2 font-mono text-sm">
+              ${recovery.map((c, i) => html`<div key=${i}>${c}</div>`)}
+            </div>
+            <div class="flex gap-2">
+              <button class="px-4 py-2 rounded-lg border text-sm" onClick=${() => copy(recovery.join('\n'), 'Códigos')}>Copiar todos</button>
+              <button class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm" onClick=${finishSetup}>Ya los he guardado</button>
+            </div>
+          </div>`}
+      </div>
+
+      <${SessionsList} notify=${notify} />
+
+      ${disabling && html`<${MfaDisableDialog} onClose=${() => setDisabling(false)} onConfirm=${disable} />`}
+    </div>`;
+}
+
+// Sesiones activas del usuario (revocables)
+function SessionsList({ notify }) {
+  const [sessions, setSessions] = useState(null);
+  const [error, setError] = useState(null);
+  const load = useCallback(() => {
+    setError(null);
+    api('/auth/sessions').then((r) => setSessions(r.data)).catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function revoke(id) {
+    try { await api(`/auth/sessions/${id}`, { method: 'DELETE' }); notify('Sesión revocada'); load(); }
+    catch (e) { notify(e.message, 'error'); }
+  }
+
+  return html`
+    <div class="bg-white rounded-xl shadow p-5">
+      <div class="text-sm font-semibold mb-3">Sesiones activas</div>
+      ${error ? html`<${ErrorState} message=${error} onRetry=${load} />`
+        : sessions === null ? html`<${Spinner} />`
+        : sessions.length === 0 ? html`<div class="text-sm text-slate-400">No hay sesiones registradas.</div>`
+        : sessions.map((s) => html`
+          <div key=${s.id} class="flex items-center justify-between py-2 border-b last:border-0">
+            <div class="min-w-0">
+              <div class="text-sm font-medium truncate">${s.device || s.user_agent || 'Dispositivo desconocido'}${s.current ? html` <span class="text-xs text-emerald-600">(actual)</span>` : ''}</div>
+              <div class="text-xs text-slate-400">${s.ip_address || s.ip || ''} ${s.last_seen_at || s.last_used_at || s.created_at ? `· ${fmtDateTime(s.last_seen_at || s.last_used_at || s.created_at)}` : ''}</div>
+            </div>
+            ${!s.current && html`<button class="text-xs border border-red-200 text-red-600 rounded px-2 py-1" onClick=${() => revoke(s.id)}>Revocar</button>`}
+          </div>`)}
+    </div>`;
+}
+
+function MfaDisableDialog({ onConfirm, onClose }) {
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  async function go(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const body = useRecovery
+        ? { current_password: password, recovery_code: code.trim() }
+        : { current_password: password, code: code.trim() };
+      await onConfirm(body); onClose();
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+  return html`
+    <${ModalShell} onClose=${onClose} size="max-w-sm">
+      <form class="p-6 space-y-3" onSubmit=${go}>
+        <div class="text-lg font-semibold">Desactivar verificación en dos pasos</div>
+        ${error && html`<div class="bg-red-50 text-red-700 text-sm rounded-lg p-2">${error}</div>`}
+        <input class="w-full border rounded-lg px-3 py-2" type="password" placeholder="Contraseña actual" required value=${password} onInput=${(e) => setPassword(e.target.value)} />
+        <input class="w-full border rounded-lg px-3 py-2 text-center tracking-widest" placeholder=${useRecovery ? 'Código de recuperación' : '000000'}
+          inputMode=${useRecovery ? 'text' : 'numeric'} maxLength=${useRecovery ? 40 : 6} required value=${code} onInput=${(e) => setCode(e.target.value)} />
+        <button type="button" class="text-xs text-indigo-600 hover:underline" onClick=${() => { setUseRecovery(!useRecovery); setCode(''); }}>
+          ${useRecovery ? 'Usar código de la app' : 'Usar código de recuperación'}
+        </button>
+        <div class="flex gap-2 justify-end pt-1">
+          <button type="button" class="px-4 py-2 rounded-lg border text-sm" onClick=${onClose}>Cancelar</button>
+          <button disabled=${busy} class="px-4 py-2 rounded-lg bg-red-600 text-white text-sm disabled:opacity-50">${busy ? 'Un momento…' : 'Desactivar'}</button>
+        </div>
+      </form>
+    <//>`;
+}
+
+// ================================================================
+// Email y Calendario
+// ================================================================
+const ENTITY_LINK_OPTS = { lead: 'Lead', company: 'Empresa', contact: 'Contacto', opportunity: 'Oportunidad' };
+
+function IntegrationStatus({ status }) {
+  if (!status) return html`<span class="text-xs text-slate-400">—</span>`;
+  const connected = !!status.connected;
+  const needsConfig = status.configured === false;
+  const label = needsConfig ? 'Requiere configuración' : connected ? `Conectado${status.address ? ` · ${status.address}` : ''}` : 'No conectado';
+  const cls = needsConfig ? 'bg-amber-100 text-amber-700' : connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500';
+  return html`<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls}">${label}</span>`;
+}
+
+function EmailCalendar({ notify, users }) {
+  const [tab, setTab] = useState('email');
+  const tabs = [['email', 'Email'], ['calendar', 'Calendario'], ['integration', 'Integración']];
+  return html`
+    <div>
+      <h2 class="text-lg font-semibold mb-1">Email y Calendario</h2>
+      <div class="text-sm text-slate-400 mb-4">Comunicación y reuniones vinculadas a tus registros.</div>
+      <div class="flex gap-1 mb-4 border-b">
+        ${tabs.map(([id, label]) => html`
+          <button key=${id} onClick=${() => setTab(id)} class="px-3 py-2 text-sm border-b-2 ${tab === id ? 'border-indigo-600 text-indigo-700 font-medium' : 'border-transparent text-slate-500 hover:text-slate-700'}">${label}</button>`)}
+      </div>
+      ${tab === 'email' && html`<${EmailTab} notify=${notify} />`}
+      ${tab === 'calendar' && html`<${CalendarTab} notify=${notify} />`}
+      ${tab === 'integration' && html`<${IntegrationTab} notify=${notify} />`}
+    </div>`;
+}
+
+function EmailTab({ notify }) {
+  const [status, setStatus] = useState(null);
+  const [messages, setMessages] = useState(null);
+  const [form, setForm] = useState({ to: '', subject: '', body: '', entity_type: '', entity_id: '' });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api('/crm/integrations/email/status').then((r) => setStatus(r.data)).catch(() => setStatus({ connected: false }));
+    api('/crm/integrations/email/messages', { query: { page_size: 20 } }).then((r) => setMessages(r.data)).catch(() => setMessages([]));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function send(e) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const body = { to: form.to, subject: form.subject, body: form.body };
+      if (form.entity_type && form.entity_id) { body.entity_type = form.entity_type; body.entity_id = form.entity_id; }
+      const res = await api('/crm/email/send', { method: 'POST', body });
+      notify(res?.data?.mode === 'console' ? 'Email registrado (modo consola)' : 'Email enviado');
+      setForm({ to: '', subject: '', body: '', entity_type: '', entity_id: '' });
+      load();
+    } catch (err) {
+      if (isNotConfigured(err)) notify('El envío de email requiere configuración del proveedor', 'error');
+      else notify(err.message, 'error');
+    } finally { setBusy(false); }
+  }
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  return html`
+    <div class="grid lg:grid-cols-2 gap-4">
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold">Enviar email</div>
+          <${IntegrationStatus} status=${status} />
+        </div>
+        <form onSubmit=${send} class="space-y-2">
+          <input class="w-full border rounded-lg px-3 py-2 text-sm" type="email" placeholder="Para (email)" required maxLength="254" value=${form.to} onInput=${set('to')} />
+          <input class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Asunto" required maxLength="200" value=${form.subject} onInput=${set('subject')} />
+          <textarea class="w-full border rounded-lg px-3 py-2 text-sm" rows="5" placeholder="Mensaje" required maxLength="5000" value=${form.body} onInput=${set('body')}></textarea>
+          <div class="flex gap-2">
+            <select class="border rounded-lg px-2 py-2 text-sm" value=${form.entity_type} onChange=${set('entity_type')}>
+              <option value="">Vincular a… (opcional)</option>
+              ${Object.entries(ENTITY_LINK_OPTS).map(([k, v]) => html`<option key=${k} value=${k}>${v}</option>`)}
+            </select>
+            ${form.entity_type && html`<input class="flex-1 border rounded-lg px-3 py-2 text-sm" placeholder="ID del registro" value=${form.entity_id} onInput=${set('entity_id')} />`}
+          </div>
+          <button disabled=${busy} class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm disabled:opacity-50">${busy ? 'Enviando…' : 'Enviar'}</button>
+        </form>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="text-sm font-semibold mb-3">Historial de mensajes</div>
+        ${messages === null ? html`<${Spinner} />`
+          : messages.length === 0 ? html`<div class="text-sm text-slate-400">Sin mensajes registrados.</div>`
+          : messages.map((m) => html`
+            <div key=${m.id} class="border-b last:border-0 py-2">
+              <div class="flex justify-between gap-2">
+                <span class="text-sm font-medium truncate">${m.subject || '(sin asunto)'}</span>
+                <span class="text-xs text-slate-400 whitespace-nowrap">${fmtDateTime(m.created_at || m.sent_at)}</span>
+              </div>
+              <div class="text-xs text-slate-500 truncate">Para: ${m.to || m.to_email || '—'}</div>
+            </div>`)}
+      </div>
+    </div>`;
+}
+
+function CalendarTab({ notify }) {
+  const [events, setEvents] = useState(null);
+  const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+
+  const load = useCallback(() => {
+    setError(null);
+    const from = new Date(Date.now() - 30 * 864e5).toISOString();
+    const to = new Date(Date.now() + 90 * 864e5).toISOString();
+    api('/crm/calendar/events', { query: { from, to, page_size: 50 } })
+      .then((r) => setEvents(r.data)).catch((e) => { setError(e.message); setEvents(null); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const fields = [
+    { name: 'title', label: 'Título', required: true, max: 200 },
+    { name: 'description', label: 'Descripción', type: 'textarea', max: 1000 },
+    { name: 'starts_at', label: 'Inicio', type: 'datetime', required: true },
+    { name: 'ends_at', label: 'Fin', type: 'datetime', required: true },
+    { name: 'location', label: 'Ubicación', max: 200 },
+    { name: 'entity_type', label: 'Vincular a (opcional)', type: 'select', options: ENTITY_LINK_OPTS },
+    { name: 'entity_id', label: 'ID del registro (opcional)', max: 60 },
+  ];
+  async function save(payload) {
+    const body = { ...payload };
+    if (!body.entity_type || !body.entity_id) { delete body.entity_type; delete body.entity_id; }
+    if (editing?.id) { await api(`/crm/calendar/events/${editing.id}`, { method: 'PATCH', body }); notify('Evento actualizado'); }
+    else { await api('/crm/calendar/events', { method: 'POST', body }); notify('Evento creado'); }
+    load();
+  }
+
+  return html`
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-sm font-semibold">Próximos eventos</div>
+        <button class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm inline-flex items-center gap-1" onClick=${() => setEditing({})}><${Icon} name="plus" className="w-4 h-4" /> Nuevo evento</button>
+      </div>
+      ${error ? html`<${ErrorState} message=${error} onRetry=${load} />`
+        : events === null ? html`<${Spinner} />`
+        : events.length === 0 ? html`<${EmptyState} icon="clock" title="Sin eventos" hint="Crea una reunión o demo." action=${html`<button class="bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm" onClick=${() => setEditing({})}>+ Nuevo evento</button>`} />`
+        : html`
+          <div class="bg-white rounded-xl shadow divide-y">
+            ${events.map((ev) => html`
+              <div key=${ev.id} class="flex items-center gap-3 p-3">
+                <div class="w-10 text-center shrink-0">
+                  <div class="text-xs text-slate-400 uppercase">${new Date(ev.starts_at).toLocaleDateString('es-ES', { month: 'short' })}</div>
+                  <div class="text-lg font-bold leading-none">${new Date(ev.starts_at).getDate()}</div>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium truncate">${ev.title}</div>
+                  <div class="text-xs text-slate-400">${fmtDateTime(ev.starts_at)} – ${new Date(ev.ends_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}${ev.location ? ` · ${ev.location}` : ''}</div>
+                </div>
+                <div class="flex gap-1 shrink-0">
+                  <button class="text-xs border rounded px-2 py-1" onClick=${() => setEditing(ev)}>Editar</button>
+                  <button class="text-xs border border-red-200 text-red-600 rounded px-2 py-1"
+                    onClick=${() => setConfirm({ title: 'Eliminar evento', message: `¿Eliminar "${ev.title}"?`, danger: true, confirmLabel: 'Eliminar',
+                      onConfirm: async () => { await api(`/crm/calendar/events/${ev.id}`, { method: 'DELETE' }); notify('Evento eliminado'); load(); } })}>Eliminar</button>
+                </div>
+              </div>`)}
+          </div>`}
+      ${editing !== null && html`
+        <${FormModal} title=${editing.id ? 'Editar evento' : 'Nuevo evento'} fields=${fields}
+          initial=${editing.id ? editing : null} onSave=${save} onClose=${() => setEditing(null)} />`}
+      ${confirm && html`<${ConfirmDialog} ...${confirm} onClose=${() => setConfirm(null)} />`}
+    </div>`;
+}
+
+function IntegrationTab({ notify }) {
+  const [email, setEmail] = useState(null);
+  const [calendar, setCalendar] = useState(null);
+  const load = useCallback(() => {
+    api('/crm/integrations/email/status').then((r) => setEmail(r.data)).catch(() => setEmail({ connected: false }));
+    api('/crm/integrations/calendar/status').then((r) => setCalendar(r.data)).catch(() => setCalendar({ connected: false }));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function connectEmail() {
+    try {
+      const res = await api('/crm/integrations/email/connect', { method: 'POST' });
+      const url = res?.data?.auth_url || res?.data?.url;
+      if (url) window.location.assign(url);
+      else { notify('Integración iniciada'); load(); }
+    } catch (e) {
+      if (isNotConfigured(e)) notify('La integración de email requiere configuración del servidor', 'error');
+      else notify(e.message, 'error');
+    }
+  }
+  async function disconnectEmail() {
+    try { await api('/crm/integrations/email', { method: 'DELETE' }); notify('Email desconectado'); load(); }
+    catch (e) { notify(e.message, 'error'); }
+  }
+
+  return html`
+    <div class="grid md:grid-cols-2 gap-4 max-w-3xl">
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex items-center gap-2 mb-2"><${Icon} name="mail" className="w-5 h-5 text-slate-400" /><div class="font-medium">Email</div></div>
+        <div class="mb-3"><${IntegrationStatus} status=${email} /></div>
+        <div class="text-xs text-slate-500 mb-3">Conecta tu buzón (Google / Microsoft 365) para registrar correos en el timeline de cada registro.</div>
+        ${email && email.connected
+          ? html`<button class="text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600" onClick=${disconnectEmail}>Desconectar</button>`
+          : html`<button class="text-sm px-3 py-1.5 rounded-lg bg-indigo-600 text-white" onClick=${connectEmail}>Conectar</button>`}
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex items-center gap-2 mb-2"><${Icon} name="clock" className="w-5 h-5 text-slate-400" /><div class="font-medium">Calendario</div></div>
+        <div class="mb-3"><${IntegrationStatus} status=${calendar} /></div>
+        <div class="text-xs text-slate-500">Sincroniza tus reuniones con las oportunidades. La conexión se gestiona junto con la cuenta de email del proveedor.</div>
       </div>
     </div>`;
 }
@@ -1894,13 +2690,13 @@ const MODULES = {
   opportunities: { label: 'Oportunidades', icon: 'opportunity', group: 'records' },
   tasks: { label: 'Tareas', icon: 'task', group: 'records' },
   products: { label: 'Productos', icon: 'product', group: 'records' },
-  automations: { label: 'Automatizaciones', icon: 'bolt', group: 'soon', soon: true },
-  email: { label: 'Email y Calendario', icon: 'mail', group: 'soon', soon: true },
-  billing: { label: 'Facturación', icon: 'billing', group: 'soon', soon: true },
-  security: { label: 'Seguridad (MFA)', icon: 'shield', group: 'soon', soon: true },
+  automations: { label: 'Automatizaciones', icon: 'bolt', group: 'tools' },
+  email: { label: 'Email y Calendario', icon: 'mail', group: 'tools' },
+  billing: { label: 'Facturación', icon: 'billing', group: 'tools' },
+  security: { label: 'Seguridad', icon: 'shield', group: 'tools' },
   settings: { label: 'Configuración', icon: 'settings', group: 'bottom', admin: true },
 };
-const GROUPS = [['main', null], ['records', 'Registros'], ['soon', 'Próximamente']];
+const GROUPS = [['main', null], ['records', 'Registros'], ['tools', 'Herramientas']];
 
 function Sidebar({ module, goto, brandName, brandColor, open, setOpen }) {
   const visible = (id, m) => !(m.admin && !can('admin'));
@@ -1913,7 +2709,6 @@ function Sidebar({ module, goto, brandName, brandColor, open, setOpen }) {
         style=${active ? { backgroundColor: brandColor } : {}}>
         <${Icon} name=${m.icon} className="w-5 h-5 shrink-0" />
         <span class="truncate">${m.label}</span>
-        ${m.soon && html`<span class="ml-auto text-[9px] px-1.5 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-amber-100 text-amber-700'}">pronto</span>`}
       </button>`;
   }
   return html`
@@ -1978,6 +2773,10 @@ function App() {
 
   function onBrandChange(newSettings) {
     const updated = { ...session, organization: { ...session.organization, settings: newSettings } };
+    setSession(updated); setSessionState(updated);
+  }
+  function setMfaEnabled(enabled) {
+    const updated = { ...session, user: { ...session.user, mfa_enabled: enabled } };
     setSession(updated); setSessionState(updated);
   }
   function goto(m) { setModule(m); setOpenRecord(null); }
@@ -2048,42 +2847,10 @@ function App() {
           ${module === 'settings' && can('admin') && html`
             <${Settings} notify=${notify} onBrandChange=${onBrandChange} users=${users} products=${products}
               productsView=${productsView()} customFieldsView=${customFieldsView()} />`}
-          ${module === 'automations' && html`
-            <${ComingSoon} title="Automatizaciones" icon="bolt"
-              description="Reglas del pipeline para no perder oportunidades."
-              bullets=${[
-                'Disparadores: lead sin actividad N días, oportunidad estancada, fecha de cierre vencida.',
-                'Acciones: crear tarea, reasignar responsable, cambiar etapa, enviar aviso.',
-                'Registro completo en el log de auditoría existente.',
-                'Contrato de API propuesto en docs/CRM_MODULES.md (sección API pendiente).',
-              ]} />`}
-          ${module === 'email' && html`
-            <${ComingSoon} title="Email y Calendario" icon="mail"
-              description="Sincroniza correo y reuniones con cada registro."
-              bullets=${[
-                'Conexión con Google / Microsoft 365 vía OAuth.',
-                'Registro automático de emails y eventos en el timeline del contacto.',
-                'Plantillas de email y seguimiento de aperturas.',
-                'El modelo de actividad actual ya admite eventos externos.',
-              ]} />`}
-          ${module === 'billing' && html`
-            <${ComingSoon} title="Facturación y planes" icon="billing"
-              description="Suscripción de la organización y límites por plan."
-              bullets=${[
-                'Planes por nº de usuarios y registros (integración Stripe).',
-                'Gestión de método de pago y facturas descargables.',
-                'Avisos de uso y actualización/baja de plan.',
-                'Sin almacenar datos de tarjeta: tokenización en el proveedor.',
-              ]} />`}
-          ${module === 'security' && html`
-            <${ComingSoon} title="Seguridad de la cuenta (MFA)" icon="shield"
-              description="Refuerza el acceso de tu equipo."
-              bullets=${[
-                'Doble factor (TOTP) obligatorio configurable para owner/admin.',
-                'Tokens de refresco y revocación de sesiones.',
-                'Política de contraseñas y bloqueo por intentos.',
-                'Historial de inicios de sesión y dispositivos.',
-              ]} />`}
+          ${module === 'automations' && html`<${Automations} notify=${notify} />`}
+          ${module === 'billing' && html`<${Billing} notify=${notify} brandColor=${brandColor} />`}
+          ${module === 'security' && html`<${MfaSettings} notify=${notify} onMfaChange=${setMfaEnabled} />`}
+          ${module === 'email' && html`<${EmailCalendar} notify=${notify} users=${users} />`}
         </main>
       </div>
       <${Toast} toast=${toast} />
@@ -2098,6 +2865,9 @@ function Login({ onLogin }) {
   const [form, setForm] = useState({ organization_name: '', name: '', email: '', password: '' });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Segundo factor: el challenge_token vive SOLO en memoria, nunca se
+  // persiste ni se registra. mfa = { challenge_token, expires_in }.
+  const [mfa, setMfa] = useState(null);
 
   async function submit(e) {
     e.preventDefault();
@@ -2106,11 +2876,20 @@ function Login({ onLogin }) {
       const res = mode === 'login'
         ? await api('/auth/login', { method: 'POST', body: { email: form.email, password: form.password } })
         : await api('/auth/signup', { method: 'POST', body: form });
-      setSession(res.data); onLogin();
+      if (res.data && res.data.mfa_required) {
+        setMfa({ challenge_token: res.data.challenge_token, expires_in: res.data.expires_in });
+        return; // aún no hay sesión: pedimos el código
+      }
+      setSession(sessionFromAuth(res.data)); onLogin();
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  if (mfa) {
+    return html`<${MfaChallenge} mfa=${mfa} onCancel=${() => { setMfa(null); setError(null); }}
+      onVerified=${(data) => { setSession(sessionFromAuth(data)); onLogin(); }} />`;
+  }
 
   return html`
     <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-100 to-white p-4">
@@ -2132,6 +2911,52 @@ function Login({ onLogin }) {
         <button type="button" class="w-full text-sm text-indigo-600 hover:underline" onClick=${() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null); }}>
           ${mode === 'login' ? '¿Primera vez? Crea la cuenta de tu empresa' : 'Ya tengo cuenta: entrar'}
         </button>
+      </form>
+    </div>`;
+}
+
+// Segundo factor en el login. Acepta código TOTP o código de recuperación.
+function MfaChallenge({ mfa, onVerified, onCancel }) {
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const body = useRecovery
+        ? { challenge_token: mfa.challenge_token, recovery_code: code.trim() }
+        : { challenge_token: mfa.challenge_token, code: code.trim() };
+      const res = await api('/auth/mfa/login', { method: 'POST', body });
+      onVerified(res.data);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return html`
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-100 to-white p-4">
+      <form onSubmit=${submit} class="bg-white rounded-2xl shadow-xl p-8 w-[26rem] space-y-4">
+        <div class="text-center">
+          <div class="w-12 h-12 mx-auto rounded-xl bg-indigo-600 text-white flex items-center justify-center mb-2"><${Icon} name="shield" className="w-6 h-6" /></div>
+          <div class="text-xl font-bold text-slate-800">Verificación en dos pasos</div>
+          <div class="text-sm text-slate-500">${useRecovery ? 'Introduce un código de recuperación' : 'Introduce el código de tu app de autenticación'}</div>
+        </div>
+        ${error && html`<div class="bg-red-50 text-red-700 text-sm rounded-lg p-2">${error}</div>`}
+        <input class="w-full border rounded-lg px-3 py-2 text-center tracking-widest" autoFocus
+          placeholder=${useRecovery ? 'Código de recuperación' : '000000'}
+          inputMode=${useRecovery ? 'text' : 'numeric'} maxLength=${useRecovery ? 40 : 6} required
+          value=${code} onInput=${(e) => setCode(e.target.value)} />
+        <button disabled=${busy} class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2.5 font-medium disabled:opacity-50">
+          ${busy ? 'Verificando…' : 'Verificar'}
+        </button>
+        <div class="flex justify-between text-sm">
+          <button type="button" class="text-slate-400 hover:text-slate-600" onClick=${onCancel}>Volver</button>
+          <button type="button" class="text-indigo-600 hover:underline" onClick=${() => { setUseRecovery(!useRecovery); setCode(''); setError(null); }}>
+            ${useRecovery ? 'Usar código de la app' : '¿Sin acceso? Usar código de recuperación'}
+          </button>
+        </div>
       </form>
     </div>`;
 }

@@ -9,7 +9,7 @@ de negocio y el mapa vs Salesforce ver `docs/PRODUCT.md`.
 |---|---|---|
 | Dashboard ejecutivo | ✅ Implementado | `GET /crm/dashboard`, `GET /crm/pipeline`, `GET /crm/tasks` |
 | Pipeline Kanban (DnD) | ✅ Implementado | `GET /crm/pipeline`, `PATCH /crm/opportunities/:id`, `POST /crm/opportunities/:id/close` |
-| Forecast | ✅ Implementado | `GET /crm/forecast` |
+| Forecast | ✅ Implementado | `GET /crm/forecast?from&months` (abierto/ponderado/ganado/perdido por mes) + tira en Dashboard |
 | Leads | ✅ Implementado | `GET/POST/PATCH/DELETE /crm/leads`, `POST /crm/leads/:id/convert` |
 | Cuentas (empresas) | ✅ Implementado | `GET/POST/PATCH/DELETE /crm/companies` |
 | Contactos | ✅ Implementado | `…/contacts`, `GET /crm/contacts/:id/export`, `POST /crm/contacts/:id/anonymize` |
@@ -23,98 +23,62 @@ de negocio y el mapa vs Salesforce ver `docs/PRODUCT.md`.
 | Branding (white-label) | ✅ Implementado | `GET/PATCH /crm/settings` |
 | Importación CSV | ✅ Implementado | `POST /crm/import/:resource` |
 | Búsqueda global | ✅ Implementado | `GET /crm/{leads,companies,contacts,opportunities}?search=` |
-| Automatizaciones | 🟠 Pantalla preview | — (ver API pendiente) |
-| Email / Calendario | 🟠 Pantalla preview | — (ver API pendiente) |
-| Facturación / planes | 🟠 Pantalla preview | — (ver API pendiente) |
-| Seguridad / MFA | 🟠 Pantalla preview | — (ver API pendiente) |
+| Automatizaciones | ✅ Backend disponible / frontend conectado | `GET/POST/PATCH/DELETE /crm/automations`, `POST /crm/automations/run`, `GET /crm/automations/:id/runs` |
+| Email / Calendario | ✅ Backend disponible / frontend conectado | `…/integrations/email/*`, `POST /crm/email/send`, `…/integrations/calendar/status`, `GET/POST/PATCH/DELETE /crm/calendar/events` |
+| Facturación / planes | ✅ Backend disponible / frontend conectado | `GET /crm/billing/summary`, `…/subscription`, `…/invoices`, `POST /crm/billing/checkout`, `…/portal` |
+| Seguridad / MFA | ✅ Backend disponible / frontend conectado | `GET /auth/mfa/status`, `POST /auth/mfa/setup`, `…/verify`, `…/disable`, `GET /auth/sessions`, `DELETE /auth/sessions/:id` |
 
-Las pantallas 🟠 muestran una previsualización marcada como "Pendiente de
-backend"; **no simulan datos** ni hacen llamadas. Se activarán cuando exista el
-endpoint correspondiente.
+> Ya **no queda ninguna pantalla "pendiente del backend" ni "pronto"**. Las
+> integraciones externas que dependen de configuración del servidor (Stripe,
+> OAuth de email/calendario) **no se muestran como error**: si el backend
+> responde "no configurado" (HTTP 501 / `NOT_CONFIGURED`), la UI muestra un
+> aviso profesional de "requiere configuración".
 
-## Mejoras de frontend incorporadas en esta iteración
+## Integraciones conectadas en esta iteración (antes "pronto")
 
-- Navegación lateral por módulos (antes pestañas superiores).
-- Dashboard ejecutivo (KPIs, embudo por etapa, mis tareas).
-- Kanban con drag & drop nativo y totales por columna.
-- Tablas con vistas guardadas y columnas configurables (localStorage por usuario).
-- Ficha 360 con pestañas (Resumen/Actividad/Tareas/Líneas), tags y acciones rápidas.
-- Importación CSV con previsualización y errores por fila.
-- Búsqueda global multi-entidad.
-- Estados de loading/empty/error y diálogos de confirmación/prompt (sin `window.confirm`).
-- Cierre por `Escape` en modales y fichas.
+Todas estas pantallas dejan de ser preview y consumen el backend real.
 
----
+### Automatizaciones (`stale_lead_task`)
+- Lista de reglas, crear/editar/activar-pausar/borrar.
+- "Ejecutar ahora" (`POST /crm/automations/run`).
+- Historial de ejecuciones por regla (`GET /crm/automations/:id/runs`).
+- Maneja `402 PAYMENT_REQUIRED` mostrando el límite del plan (inline + toast).
+- Contrato create/update: `{ name, rule_type:'stale_lead_task', is_active, config:{ stale_days, task_title, due_in_days } }`.
 
-## API pendiente (contratos propuestos para backend)
+### Email y Calendario
+- Tabs **Email / Calendario / Integración**.
+- Email: estado del proveedor, envío (`POST /crm/email/send`; en dev funciona en
+  "modo consola" y la UI lo refleja), historial de mensajes.
+- Calendario: lista, crear/editar/borrar eventos.
+- Integración: estado y conexión/desconexión del proveedor.
+- Email y eventos pueden vincularse a lead/empresa/contacto/oportunidad.
 
-> Estas rutas **no existen todavía**. Se documentan aquí como contrato esperado
-> para que el equipo de backend (lane `codex/security-commercial-core`) las
-> implemente con las mismas garantías que el resto: auth obligatoria,
-> autorización por rol, aislamiento por tenant (`organization_id` del JWT),
-> validación de entrada, queries parametrizadas, registro en `crm_activity_log`
-> y rate limiting en escrituras.
+### Facturación / planes (Stripe)
+- Plan, estado, fin de prueba y uso vs. límites (barras).
+- Facturas (también con lista vacía).
+- Botones de checkout por plan (`starter|professional|business|enterprise`) y portal.
+- Si Stripe **no está configurado** en el servidor, la sección de suscripción
+  muestra "requiere configuración" (sin error crudo).
 
-### 1. Automatizaciones
-Reglas "cuando ocurre X, haz Y" sobre entidades del CRM.
+### Seguridad / MFA
+- Estado MFA (`GET /auth/mfa/status`).
+- Activación: contraseña → `setup` (muestra `otpauth_url` + secreto, sin librería
+  QR externa) → código → `verify`. Recovery codes mostrados **una sola vez**.
+- Desactivación con contraseña + código.
+- Sesiones activas con revocación.
+- Login: si `POST /auth/login` devuelve `mfa_required` + `challenge_token`, la UI
+  pide el segundo factor antes de crear sesión (no persiste el challenge).
 
-```
-GET    /api/crm/automations                 -> { data: [Automation], pagination }
-POST   /api/crm/automations                 (perm: crm:admin)
-PATCH  /api/crm/automations/:id             (perm: crm:admin)
-DELETE /api/crm/automations/:id             (perm: crm:admin)
-GET    /api/crm/automations/:id/runs        -> historial de ejecuciones (auditoría)
+## Dependencias de entorno (servidor)
 
-Automation {
-  id, name, is_active,
-  trigger: {
-    type: 'lead_idle' | 'opportunity_stale' | 'close_date_overdue' | 'stage_changed',
-    params: { days?: number, stage_id?: uuid }
-  },
-  conditions: [{ field, op: 'eq'|'neq'|'gt'|'lt'|'contains', value }],
-  actions: [
-    { type: 'create_task', params: { title, assignee: 'owner'|uuid, due_in_days } } |
-    { type: 'reassign', params: { user_id } } |
-    { type: 'set_stage', params: { stage_id } } |
-    { type: 'notify', params: { user_id } }
-  ]
-}
-```
-Notas: ejecución idempotente; cada acción genera entrada en `crm_activity_log`
-con `action: 'automation_run'`. Sin envío de email hasta tener el módulo Email.
+Estas funciones son **end-to-end desde la UI**, pero su comportamiento real
+depende de variables de entorno del backend (fuera de la lane de frontend):
 
-### 2. Email y Calendario
-```
-GET    /api/crm/integrations/email/status        -> { connected, provider, address }
-POST   /api/crm/integrations/email/connect       -> { auth_url }   (OAuth Google/MS365)
-DELETE /api/crm/integrations/email               (desconectar)
-GET    /api/crm/integrations/email/messages      ?entity_type&entity_id  (timeline)
-POST   /api/crm/email/send                        { to, subject, body, entity_type, entity_id }
-```
-Notas: tokens OAuth cifrados en backend, nunca expuestos al cliente. Mensajes y
-eventos se reflejan en el timeline existente (`crm_activity_log` / notas).
-
-### 3. Facturación / planes (Stripe)
-```
-GET    /api/crm/billing/subscription   -> { plan, status, seats, current_period_end }
-GET    /api/crm/billing/invoices       -> { data: [{ id, amount, pdf_url, date }] }
-POST   /api/crm/billing/checkout       { plan } -> { checkout_url }   (Stripe Checkout)
-POST   /api/crm/billing/portal         -> { portal_url }              (Stripe Billing Portal)
-```
-Notas: **no** almacenar datos de tarjeta (tokenización en Stripe). Webhooks de
-Stripe para sincronizar estado de suscripción. Límites por plan aplicados en backend.
-
-### 4. Seguridad / MFA
-```
-POST   /api/auth/mfa/setup     -> { otpauth_url, secret_masked }   (TOTP)
-POST   /api/auth/mfa/verify    { code } -> activa MFA para el usuario
-POST   /api/auth/mfa/disable   { code }
-GET    /api/auth/sessions      -> sesiones/dispositivos activos
-DELETE /api/auth/sessions/:id  -> revocar sesión
-```
-Notas: secreto TOTP cifrado en backend; el login pasa a requerir el código
-cuando MFA está activo. Acompañar de refresh tokens y bloqueo por intentos
-(coordinado con la lane de seguridad).
+- **Stripe** (facturación): sin claves configuradas, checkout/portal responden
+  "no configurado" y la UI lo indica como "requiere configuración".
+- **Email/Calendario** (OAuth Google/MS365): sin proveedor configurado, el envío
+  cae a "modo consola" y la conexión aparece como pendiente de configurar.
+- **MFA**: operativo sin dependencias externas (TOTP).
 
 ---
 
@@ -125,4 +89,7 @@ cuando MFA está activo. Acompañar de refresh tokens y bloqueo por intentos
 - Registro único: `{ data: {...} }`.
 - Errores: `{ error: { code, message } }` (mensaje seguro, sin stack).
 - Auth: `POST /api/auth/login` y `POST /api/auth/signup` →
-  `{ data: { token, user: {id,name,role}, organization: {name, settings} } }`.
+  `{ data: { access_token|token, refresh_token?, user: {id,name,role}, organization: {name, settings} } }`.
+  Login con MFA: `{ data: { mfa_required:true, challenge_token, expires_in, user, organization } }`.
+  El frontend normaliza `access_token`/`token` y guarda la sesión solo en
+  `sessionStorage` (nunca tokens MFA/recovery/challenge en `localStorage`).

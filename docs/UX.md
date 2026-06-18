@@ -68,24 +68,44 @@ Tareas / Productos:
 - Usuarios (invitar/editar/activar), Productos (catálogo), Campos personalizados
   (crear/borrar por entidad), Marca (nombre y color white-label).
 
-### Pantallas "pendiente de backend"
-Previsualización con chip "Pendiente de backend", descripción del valor y
-botón deshabilitado. Contratos propuestos en `docs/CRM_MODULES.md`.
+### Herramientas (conectadas a backend real)
+Grupo "Herramientas" del sidebar. Ya **no hay pantallas "pronto"**.
+
+- **Automatizaciones**: tabla de reglas `stale_lead_task`, crear/editar/
+  pausar/borrar, "Ejecutar ahora" y modal de historial de ejecuciones.
+  Si el plan limita automatizaciones, se muestra el aviso de límite (402).
+- **Email y Calendario** (tabs):
+  - *Email*: estado del proveedor, envío de email (vinculable a registro),
+    historial de mensajes. En dev funciona en "modo consola".
+  - *Calendario*: lista de eventos y alta/edición/borrado.
+  - *Integración*: estado y conexión/desconexión del proveedor.
+- **Facturación**: plan, estado, fin de prueba, uso vs. límites, facturas y
+  botones de checkout/portal. Si Stripe no está configurado → "requiere
+  configuración" (sin error crudo).
+- **Seguridad**: estado MFA, alta de TOTP (secreto + `otpauth_url`, sin QR
+  externo), recovery codes mostrados una sola vez, desactivación y sesiones
+  activas con revocación.
 
 ## Flujos principales
 
 1. **Alta de organización**: Login → "Crea la cuenta de tu empresa" → signup →
    sesión iniciada con pipeline por defecto.
-2. **Captar y cualificar lead**: Leads → Nuevo → ficha 360 (notas, tareas,
+2. **Login con MFA**: si la cuenta tiene MFA, tras la contraseña se pide el
+   código TOTP (o un código de recuperación) antes de crear sesión.
+3. **Activar MFA**: Seguridad → Activar → contraseña → escanear/copiar secreto →
+   código → guardar recovery codes (se muestran una sola vez).
+4. **Captar y cualificar lead**: Leads → Nuevo → ficha 360 (notas, tareas,
    tags) → Convertir → oportunidad en el pipeline.
-3. **Gestionar oportunidad**: Pipeline → arrastrar entre etapas → ficha →
+5. **Gestionar oportunidad**: Pipeline → arrastrar entre etapas → ficha →
    pestaña Líneas (añadir productos del catálogo) → cerrar ganada/perdida.
-4. **Previsión**: Forecast por mes; Dashboard para visión ejecutiva.
-5. **Búsqueda global**: topbar → resultados agrupados por entidad → abre la
-   ficha del registro directamente.
-6. **Importación**: módulo → Importar → pegar CSV → previsualizar → importar
-   con informe de errores por fila.
-7. **Configurar el CRM (admin)**: usuarios, catálogo, campos personalizados, marca.
+6. **Automatizar seguimiento**: Automatizaciones → Nueva regla `stale_lead_task`
+   → Ejecutar ahora → ver historial.
+7. **Comunicar**: Email y Calendario → enviar email / crear evento vinculado.
+8. **Previsión**: Forecast por mes; Dashboard para visión ejecutiva.
+9. **Facturación**: revisar plan y uso; iniciar checkout/portal si Stripe activo.
+10. **Búsqueda global**: topbar → resultados agrupados → abre la ficha.
+11. **Importación**: módulo → Importar → previsualizar → importar con errores por fila.
+12. **Configurar el CRM (admin)**: usuarios, catálogo, campos personalizados, marca.
 
 ## Criterios de aceptación
 
@@ -97,10 +117,15 @@ botón deshabilitado. Contratos propuestos en `docs/CRM_MODULES.md`.
 - [x] Importación CSV con previsualización y errores por fila.
 - [x] Estados de loading / vacío / error / confirmación en todas las vistas.
 - [x] UI para usuarios, campos personalizados y branding (backend existente).
-- [x] Pantallas "pendiente de backend" claramente marcadas (no simulan datos).
+- [x] Automatizaciones, Email/Calendario, Facturación y Seguridad conectados a
+  backend real; **ninguna pantalla "pronto"/"pendiente del backend"**.
+- [x] Integraciones sin configurar se muestran como "requiere configuración"
+  (no como error ni como funcionalidad inexistente).
+- [x] MFA: setup con secreto/`otpauth_url`, recovery codes una sola vez, login 2FA.
 - [x] Búsqueda global funcional sobre leads/cuentas/contactos/oportunidades.
 - [x] Sin XSS: sin `dangerouslySetInnerHTML`, sin innerHTML, sin scripts inline.
-- [x] Sin dependencias CDN nuevas; sin tokens en consola.
+- [x] Sin dependencias CDN nuevas; sin tokens/secretos/recovery codes en consola
+  ni en `localStorage`.
 - [x] El frontend solo oculta controles por rol; el backend autoriza siempre.
 
 ## Notas de accesibilidad / pendientes UX
